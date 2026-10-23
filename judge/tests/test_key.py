@@ -8,8 +8,11 @@ Every picture is a fixture of make.sh (key-*.mp4: BT.601 limited range with all 
 clip on the track below, so a keyed (transparent) place shows that blue. The test samples the export where the original
 sampled its own: the mean colour of a 24x24 block (read as the export says: BT.709 limited range), with the original's
 tolerances (40 levels a channel; 60 for the red box, whose edges the chroma subsampling softens; 30 for the spill box).
-The colour `auto` resolves to is read from get_state and must be the one detect_key_colour answers; the export then
-shows that the key removed exactly that screen.
+The colour `auto` resolves to is read from get_state and must be the one detect_key_colour answers, within 1 level of
+the screen's grey (a flat grey decodes exactly); the export then shows that the key removed exactly that screen. A
+chroma key compares hue and saturation only (PROTOCOL.md, "Effects"), so on the grey screen it erases the white and
+black boxes too. Last, a keyed noisy clip exports the same frames twice: a check of its own, since the original's
+section 5 (the same frames whatever the filter thread count) needs a thread count the judge cannot choose.
 
 Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
 """
@@ -22,6 +25,9 @@ EXTRA_MEDIA = ("key-grey.mp4", "key-blue-p.mp4", "key-blue-l.mp4", "key-green.mp
 
 BLUE, WHITE, BLACK, RED = (0, 0, 255), (255, 255, 255), (0, 0, 0), (255, 0, 0)
 FPS = 30
+# The flat grey screen is 0x808080 coded as BT.601 limited range (Y 126, U and V 128), which decodes to 128 exactly; a
+# key colour found 2 levels off would still key the screen, so only get_state's colour shows it (judge/PORTING.md, key 1).
+GREY_TOL = 1
 
 
 class Exports:
@@ -101,16 +107,16 @@ def run(t):
     # ---- 1. a grey screen keyed with the colour the editor finds (1080x1920)
     over = layered(t, d, 1080, 1920, "key-blue-p.mp4", "key-grey.mp4", v1)
     det = d.detect_key_colour(over)
-    t.check("detect_key_colour finds the flat grey screen: 0x808080 (each channel within 2)",
-            near(channels(det.get("color")), (128, 128, 128), 2), det)
+    t.check(f"detect_key_colour finds the flat grey screen: 0x808080 (each channel within {GREY_TOL})",
+            near(channels(det.get("color")), (128, 128, 128), GREY_TOL), det)
     t.check("...with a confidence of 0.95 or more (a flat screen)",
             isinstance(det.get("confidence"), (int, float)) and det["confidence"] >= 0.95, det)
     ck = d.apply_effect(over, "colorkey", color="auto")
     fx = key_effect(d, over, "colorkey")
     found = channels((fx or {}).get("color"))
-    t.check("colorkey with colour auto keeps the colour it found, the screen's: get_state shows 0x808080 (each channel "
-            "within 2), the colour detect_key_colour answered, not auto",
-            near(found, (128, 128, 128), 2) and found == channels(det.get("color")), fx)
+    t.check(f"colorkey with colour auto keeps the colour it found, the screen's: get_state shows 0x808080 (each "
+            f"channel within {GREY_TOL}), the colour detect_key_colour answered, not auto",
+            near(found, (128, 128, 128), GREY_TOL) and found == channels(det.get("color")), fx)
     x.export("colorkey")
     px("colorkey", 1, 540, 1650, BLUE, "the grey background is keyed: the blue below shows")
     px("colorkey", 1, 540, 800, BLUE, "the grey between the boxes is keyed: blue")
@@ -119,10 +125,12 @@ def run(t):
     px("colorkey", 1, 250, 1150, RED, "the red box is kept", 60)
     px("colorkey", 1, 705, 1150, BLACK, "the black outline of the target is kept")
     px("colorkey", 1, 830, 1150, WHITE, "the white middle of the target is kept")
-    # Why colorkey exists: a chroma key at the same grey erases every neutral (they share grey's chroma).
+    # Why colorkey exists: a chroma key at the same grey erases every neutral (PROTOCOL: a chroma key compares hue and
+    # saturation only, and the neutrals share grey's).
     d.apply_effect(over, "chromakey", color="0x808080", effect_id=ck)
     x.export("chromakey-grey")
-    px("chromakey-grey", 1, 250, 450, BLUE, "chromakey 0x808080 erases the white box too (the blue shows)", 60)
+    px("chromakey-grey", 1, 250, 450, BLUE, "chromakey 0x808080 erases the white box too (a chroma key ignores "
+       "brightness: the blue shows)", 60)
     px("chromakey-grey", 1, 830, 450, BLUE, "chromakey 0x808080 erases the black box too", 60)
     # A colour grade ahead of the key: it still keys.
     d.apply_effect(over, "colorkey", color="0x808080", effect_id=ck)
@@ -177,7 +185,8 @@ def run(t):
     px("despill", 1, 320, 320, RED, "with despill on, the red subject is still kept", 60)
     del ds
 
-    # ---- 5. a keyed clip exports the same frames each time (the original: whatever the filter thread count)
+    # ---- 5. a keyed clip exports the same frames each time. Not the original's section 5 (the same frames whatever
+    # the filter thread count): the judge cannot choose the editor's thread count, so that stays v0.2.0-only.
     clear(d)
     d.set_project(width=320, height=240, fps=FPS)
     noisy = d.place_clip(d.import_media(t.media("key-noisy.mkv")), "v0", 0, 0)

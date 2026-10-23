@@ -21,9 +21,12 @@ original's limits (4 levels on an export, 6 on a rendered frame, 3 on a still, 8
   with alpha export with the source's colours.
 - Motion graphics (3d): a graphic that draws flat colours exports with them (built-in renderer; the graphics add-on
   when the judge has one).
-- A project that says nothing about its media's colours (an OTIO file from another editor; section 4).
+- An OTIO file from another editor, which says nothing about its media's colours, opens and exports with the true
+  colours: a check of its own. The original's section 4 (a project saved before the editor recorded each file's colour
+  description) stays v0.2.0-only: an OTIO import reads the media again, so it never meets such a project, and only the
+  editor's own project format can hold one.
 - render_frame, before and after a preview render (5); a freeze frame's still, a thumbnail and the colour found for a
-  key (6); a JPEG is a still (2).
+  key (6: within 1 level); a JPEG is a still (2).
 
 Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
 """
@@ -348,7 +351,7 @@ def stills_and_frames(t, d, o):
         rgb = ((v >> 16) & 255, (v >> 8) & 255, v & 255)
         return max(abs(a - b) for a, b in zip(rgb, (30, 200, 60))), got
     t.measure("detect_key_colour on an untagged HD green screen finds its true colour, 0x1EC83C (each channel within "
-              "3)", key, lambda v: v[0] <= 3, "<= 3")
+              "1; read as BT.601 it would be 0x2CE341, 27 off in green)", key, lambda v: v[0] <= 1, "<= 1")
 
 
 # ---------------------------------------------------------------- 3d: motion graphics
@@ -413,7 +416,8 @@ def graphics(t, d, o):
         t.measure(name, colours, lambda v: v[0] <= 4, "<= 4")
 
 
-# ---------------------------------------------------------------- 4: a project that says nothing about colour
+# ---------------------------------------------------------------- an OTIO file that says nothing about colour (not
+# the original's section 4, which stays v0.2.0-only: judge/PORTING.md)
 def foreign_otio(t, d, o):
     media = t.media("cs-601.mp4")
     rt = (lambda v: {"OTIO_SCHEMA": "RationalTime.1", "rate": FPS, "value": v})

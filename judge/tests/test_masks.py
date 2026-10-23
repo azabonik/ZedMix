@@ -9,9 +9,10 @@ a. Blend modes: a picture of grey bands on v1 over a picture of colour bands on 
    exports the same frames as a clip that never had one.
 b. Masks on a square red picture on v1 (fitted 360x360 in the middle of a 640x360 canvas) over blue: ellipse, rect
    (and its corner roundness), linear (and turned 90 degrees), mirror, invert (the letterbox stays transparent), an
-   anti-aliased edge, a feathered edge (graded, monotonic, about half at the line), the mask following the clip's
-   transform and rotation, a mask with a blend mode, render_frame after a mask change, undo, clamping, and the
-   refusals (a blend mode on an adjustment layer, a mode the editor does not have).
+   anti-aliased edge, a feathered edge (graded, monotonic, and as wide as PROTOCOL's `feather` says: 90 % to 10 % of
+   the clip across 0.3 of the picture's short side, centred on the line), the mask following the clip's transform and
+   rotation, a mask with a blend mode, render_frame after a mask change, undo, clamping, and the refusals (a blend
+   mode on an adjustment layer, a mode the editor does not have).
 c. A mask on a keyed clip (it multiplies the key, it does not undo it), on a clip with its own alpha, on an adjustment
    layer (the look only inside it), and a blend mode set on a clip joined by a transition (the whole run gets it).
 d. `add` leaves the frames before the layer and the picture outside it exactly as they were; a multiply clip's white
@@ -29,7 +30,7 @@ import edits
 
 PORT_BOUND = True
 TIMEOUT = 1500
-CHECKS = 99
+CHECKS = 100
 EXTRA_MEDIA = ("mk-bands.png", "mk-greys.png", "mk-blue.png", "mk-red.png", "mk-white.png", "mk-grey64.png",
                "mk-redsq.png", "mk-greenbox.png", "mk-disc.mkv")
 
@@ -91,6 +92,37 @@ def near(c, want, tol):
 
 def fmt(c):
     return "(" + ",".join(str(int(round(v))) for v in c) + ")" if c else str(c)
+
+
+# The feathered edge: PROTOCOL's `feather` is the soft edge's width from where the clip shows at 90 % to where it shows
+# at 10 %, as a fraction of the picture's short side. v0.2.0 reads 107.3 px for 108; an edge 1.2 times as wide would
+# read about 130, one 1.6 times as wide about 173 (judge/PORTING.md, masks b).
+FEATHER, FEATHER_TOL, FEATHER_MID = 0.3, 0.10, 3
+
+
+def soft_edge(pic, centre, reach=150, band=20):
+    """The red across a horizontal edge at row centre[1] of `pic` (the clip's red above, the track below's blue under
+    it): the mean red of each row of the columns centre[0] +- band, from `reach` rows above to `reach` rows under.
+    -> {"top", "bottom": the red at the two ends; "worst_rise": the largest rise from a row to the next; "width": the
+    distance between the 90 % and 10 % points of top..bottom (linear between row middles), "middle": their midpoint's
+    distance from the line (the top of row centre[1]), or None when the red does not cross them; "samples": red at -60,
+    -30, -10, 0, 10, 30, 60 px}"""
+    cx, cy = centre
+    y0 = cy - reach
+    prof = [pic.box(cx - band, y, 2 * band + 1, 1)[0] for y in range(y0, cy + reach + 1)]
+    top, bottom = prof[0], prof[-1]
+
+    def crossing(level):
+        for i in range(1, len(prof)):
+            if prof[i] <= level <= prof[i - 1] and prof[i] < prof[i - 1]:
+                return y0 + i - 0.5 + (prof[i - 1] - level) / (prof[i - 1] - prof[i])
+        return None
+    y90, y10 = crossing(bottom + 0.9 * (top - bottom)), crossing(bottom + 0.1 * (top - bottom))
+    ok = y90 is not None and y10 is not None
+    return {"top": round(top, 1), "bottom": round(bottom, 1),
+            "worst_rise": round(max(b - a for a, b in zip(prof, prof[1:])), 1),
+            "width": round(y10 - y90, 1) if ok else None, "middle": round((y10 + y90) / 2 - cy, 1) if ok else None,
+            "samples": [round(prof[reach + o]) for o in (-60, -30, -10, 0, 10, 30, 60)]}
 
 
 class Shots:
@@ -291,15 +323,19 @@ def masks(t, d, s, v1):
     px("linear-90", C[0] - 60, C[1], BLUE, "linear turned 90 degrees: the left side shows the track below")
     d.set_mask(over, rotation=0, feather=0.3)
     s.export("linear-feather")
-
-    def profile():
-        return [s.pic("linear-feather").mean(C[0], C[1] + o, 1)[0] for o in (-60, -30, -10, 0, 10, 30, 60)]
-    t.measure("a feathered linear edge (feather 0.3) grades from the clip to the track below: monotonic, red 200 or "
-              "more 60 px above the line and 55 or less 60 px below, between 40 and 215 30 px either side, about half "
-              "(80 to 175) at the line", profile,
-              lambda v: all(b <= a + 2 for a, b in zip(v, v[1:])) and v[0] >= 200 and v[6] <= 55 and
-              all(40 < x < 215 for x in (v[1], v[5])) and 80 <= v[3] <= 175,
-              "red at -60, -30, -10, 0, 10, 30, 60 px from the line")
+    edge_w = FEATHER * min(W, H)  # the picture is 360x360: its short side is the canvas's height
+    feather_edge = (lambda: soft_edge(s.pic("linear-feather"), C))
+    t.measure("a feathered linear edge (feather 0.3) grades from the clip to the track below: the clip whole 150 px "
+              "above the line and the track below 150 px under it (red 245 or more, then 10 or less), and the red "
+              "never rises on the way down (by more than 2, row by row)", feather_edge,
+              lambda v: v["top"] >= 245 and v["bottom"] <= 10 and v["worst_rise"] <= 2,
+              "red 150 px either side of the line, the largest rise between rows; the detail has red at -60, -30, -10, "
+              "0, 10, 30, 60 px")
+    t.measure(f"...its soft edge is as wide as feather 0.3 says (PROTOCOL: from 90 % of the clip to 10 %, 0.3 of the "
+              f"picture's short side, {edge_w:.0f} px within {FEATHER_TOL:.0%}), centred on the line (its middle "
+              f"within {FEATHER_MID} px)", feather_edge,
+              lambda v: v["width"] is not None and abs(v["width"] - edge_w) <= FEATHER_TOL * edge_w and
+              abs(v["middle"]) <= FEATHER_MID, f"{edge_w:.0f} px +- {FEATHER_TOL:.0%}, middle within {FEATHER_MID} px")
     d.set_mask(over, shape="mirror", feather=0, h=0.25)
     s.export("mirror")
     px("mirror", *C, RED, "mirror: inside the band")
