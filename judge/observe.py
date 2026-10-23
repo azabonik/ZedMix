@@ -66,6 +66,7 @@ def run(cmd, timeout=TIMEOUT, heavy=True, fds=(), text=True):
 # or URLs (an HLS or DASH playlist, a concat list, an image sequence) is not followed, whatever its name says.
 MEDIA = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,mp3,png_pipe"  # renders, exports, the media, a rendered frame
 PICTURE = "png_pipe,nut"  # a rendered frame (PNG) or a frame Frames extracted (rawvideo in NUT)
+STILL = "png_pipe,jpeg_pipe"  # an image the editor wrote (a thumbnail): PNG or JPEG, each reads only its own input
 _ROOTS = []
 TEXT_LIMIT = 8 << 20  # the most bytes source.read() reads: captions, OTIO and project files are far smaller
 
@@ -173,16 +174,16 @@ def sha256(path):
 _probe_cache = {}
 
 
-def probe(path):
+def probe(path, formats=MEDIA):
     """ffprobe -show_format -show_streams as a dict (cached per path and the file's identity and modification
-    time). The file is read through source() with the MEDIA demuxers."""
+    time). The file is read through source() with the MEDIA demuxers (or `formats`)."""
     with source(path) as src:
         st = src.stat()
-        key = (path, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+        key = (path, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, formats)
         if key in _probe_cache:
             return _probe_cache[key]
-        p = run([FFPROBE, "-v", "error", "-show_format", "-show_streams", "-of", "json"] + src.words(), heavy=False,
-                fds=[src.fd])
+        p = run([FFPROBE, "-v", "error", "-show_format", "-show_streams", "-of", "json"] + src.words(formats),
+                heavy=False, fds=[src.fd])
     try:
         info = json.loads(p.stdout or "{}")
     except json.JSONDecodeError:
@@ -193,8 +194,8 @@ def probe(path):
     return info
 
 
-def streams(path):
-    return probe(path).get("streams", [])
+def streams(path, formats=MEDIA):
+    return probe(path, formats).get("streams", [])
 
 
 def duration(path):
@@ -205,8 +206,8 @@ def duration(path):
     return float(d)
 
 
-def video_stream(path):
-    for s in streams(path):
+def video_stream(path, formats=MEDIA):
+    for s in streams(path, formats):
         if s.get("codec_type") == "video" and not (s.get("disposition") or {}).get("attached_pic"):
             return s
     return None
@@ -257,9 +258,9 @@ def display_geometry(vs):
     return w, h, sar_f
 
 
-def size(path):
+def size(path, formats=MEDIA):
     """(width, height, sar) of the first video stream as displayed; Unmeasurable without one."""
-    vs = video_stream(path)
+    vs = video_stream(path, formats)
     if vs is None:
         raise Unmeasurable(f"{os.path.basename(path)} has no video stream")
     return display_geometry(vs)
@@ -446,14 +447,15 @@ def render_problem(path, root, seconds, fps, judge_paths=()):
     return None
 
 
-def pixels(path, t, chain, fmt="rgb24", frames=1):
+def pixels(path, t, chain, fmt="rgb24", frames=1, formats=MEDIA):
     """The raw pixels (bytes) of `frames` frames of the video at `path`, from the first frame at or after `t` s, after
     the FFmpeg filter `chain` (a crop, for example, in the frame's own size), as `fmt` (rgb24: 3 bytes a pixel; gray:
-    1). Unmeasurable without a video stream or a frame there."""
-    if video_stream(path) is None:
+    1). `formats`: the demuxers it may be read with (source.words; STILL for an image the editor wrote). Unmeasurable
+    without a video stream or a frame there."""
+    if video_stream(path, formats) is None:
         raise Unmeasurable(f"{os.path.basename(path)} has no video stream")
     with source(path) as src:
-        p = run([FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-ss", f"{float(t):.3f}"] + src.words()
+        p = run([FFMPEG, "-nostdin", "-hide_banner", "-v", "error", "-ss", f"{float(t):.3f}"] + src.words(formats)
                 + ["-map", "0:v:0", "-frames:v", str(int(frames)), "-vf", f"{chain},format={fmt}", "-f", "rawvideo",
                    "-"], timeout=300, fds=[src.fd], text=False)
     if p.returncode != 0 or not p.stdout:
@@ -484,6 +486,98 @@ def hex_colour(value):
         return None
     m = re.fullmatch(r"(?:0[xX]|#)([0-9a-fA-F]{6})", value.strip())
     return int(m.group(1), 16) if m else None
+
+
+# ---------------------------------------------------------------- colour: tags, readings, pictures
+# A YUV picture's colours depend on how it is read: its matrix (BT.601 or BT.709) and range (limited "tv" or full
+# "pc"). A file says so in its colour tags, and a player reads it that way (and guesses where a tag is missing). The
+# judge reads a file the way the test names (read_as: an explicit matrix and range, whatever FFmpeg would guess), so a
+# measurement does not depend on how the judge's own FFmpeg version reads tags, and checks the tags themselves apart
+# (colour_tags).
+_UNSET = (None, "", "unknown", "unspecified", "reserved", "N/A")
+
+
+def colour_tags(path):
+    """The first video stream's colour tags, as ffprobe names them: {"range", "matrix", "transfer", "primaries"}, each
+    None where the file does not say."""
+    vs = video_stream(path)
+    if vs is None:
+        raise Unmeasurable(f"{os.path.basename(path)} has no video stream")
+    v = (lambda k: None if vs.get(k) in _UNSET else vs.get(k))
+    return {"range": v("color_range"), "matrix": v("color_space"), "transfer": v("color_transfer"),
+            "primaries": v("color_primaries")}
+
+
+def read_as(matrix, rng):
+    """The FFmpeg chain that reads a YUV picture with `matrix` ("bt601" or "bt709") at range `rng` ("tv": limited,
+    "pc": full) into exact RGB (rgb24, chroma interpolated in full precision), whatever its tags say."""
+    if matrix not in ("bt601", "bt709") or rng not in ("tv", "pc"):
+        raise ValueError(f"no reading {matrix!r} {rng!r}")
+    return f"scale=in_color_matrix={matrix}:in_range={rng}:flags=bilinear+accurate_rnd+full_chroma_int,format=rgb24"
+
+
+class Picture:
+    """One decoded frame of `path` at `t` s as exact RGB: `chain` reads it (read_as for a YUV file, "null" for an RGB
+    picture such as a PNG that render_frame wrote), `formats` the demuxers it may be read with (STILL for an image the
+    editor wrote). .w, .h (as displayed), .rgb (rgb24 bytes)."""
+
+    def __init__(self, path, t, chain="null", formats=MEDIA):
+        self.w, self.h, _ = size(path, formats)
+        self.rgb = pixels(path, t, chain, "rgb24", formats=formats)
+        if len(self.rgb) < self.w * self.h * 3:
+            raise Unmeasurable(f"{os.path.basename(path)}: {len(self.rgb)} bytes for a {self.w}x{self.h} frame")
+
+    def px(self, x, y):
+        i = (int(y) * self.w + int(x)) * 3
+        return tuple(self.rgb[i:i + 3])
+
+    def box(self, x0, y0, w, h):
+        """The mean colour (floats) of the w x h block with its top left corner at (x0, y0), clipped to the frame."""
+        acc, n = [0, 0, 0], 0
+        for y in range(max(0, int(y0)), min(self.h, int(y0) + int(h))):
+            row = (y * self.w) * 3
+            for x in range(max(0, int(x0)), min(self.w, int(x0) + int(w))):
+                i = row + x * 3
+                acc[0] += self.rgb[i]
+                acc[1] += self.rgb[i + 1]
+                acc[2] += self.rgb[i + 2]
+                n += 1
+        if not n:
+            raise Unmeasurable(f"no pixels at ({x0}, {y0}) in a {self.w}x{self.h} frame")
+        return tuple(v / n for v in acc)
+
+    def mean(self, x, y, r=0):
+        """The mean colour, rounded, of the (2r+1) x (2r+1) block centred on (x, y)."""
+        return tuple(round(v) for v in self.box(x - r, y - r, 2 * r + 1, 2 * r + 1))
+
+    def cells(self, cols, rows, rect=None, half=3):
+        """The mean colour (floats) of the 2*half x 2*half block at the middle of each cell of a cols x rows grid laid
+        over `rect` (x, y, w, h; the whole frame by default), row by row: the middle of cell (c, r) is
+        (x + floor((c + 1/2) w / cols), y + floor((r + 1/2) h / rows)), the block from half before it."""
+        x0, y0, w, h = rect or (0, 0, self.w, self.h)
+        return [self.box(x0 + (c * 2 + 1) * w // (2 * cols) - half, y0 + (r * 2 + 1) * h // (2 * rows) - half,
+                         2 * half, 2 * half) for r in range(rows) for c in range(cols)]
+
+
+def max_error(got, want):
+    """The largest difference, in any channel, between colours `got` and `want` (lists of (r, g, b))."""
+    return max(abs(g - w) for gc, wc in zip(got, want) for g, w in zip(gc, wc))
+
+
+def plane_diff(a, b, start, end):
+    """{"max", "p99", "mean"} of |a[i] - b[i]| over i in [start, end) of two raw planes (bytes)."""
+    hist = [0] * 256
+    for x, y in zip(a[start:end], b[start:end]):
+        hist[abs(x - y)] += 1
+    n = max(1, sum(hist))
+    total = sum(d * c for d, c in enumerate(hist))
+    acc, p99 = 0, 0
+    for d, c in enumerate(hist):
+        acc += c
+        if acc >= n * 0.99:
+            p99 = d
+            break
+    return {"max": max((d for d, c in enumerate(hist) if c), default=0), "p99": p99, "mean": round(total / n, 3)}
 
 
 # ---------------------------------------------------------------- audio

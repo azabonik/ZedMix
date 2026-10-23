@@ -369,6 +369,36 @@ class Driver:
         """Moves the effect to position `to_index` (0 = first) of the clip's effects."""
         return self.request("reorder_effect", {"clip": clip, "effect": effect, "to_index": int(to_index)})
 
+    def detect_key_colour(self, clip):
+        """The colour a key's `auto` would key on the clip, and how much of its border has it.
+        -> {"color": hex, "confidence": number}"""
+        return self.request("detect_key_colour", {"clip": clip})
+
+    def set_blend_mode(self, clip, mode):
+        """How the clip's picture combines with the tracks below it (PROTOCOL.md, "Compositing"); mode sent unchanged."""
+        return self.request("set_blend_mode", {"clip": clip, "mode": mode})
+
+    def set_mask(self, clip, **fields):
+        """The clip's shape mask: shape ("rect", "ellipse", "linear", "mirror", or "none" to remove it), x, y, w, h,
+        rotation, feather, roundness, invert; only the fields given change (PROTOCOL.md, "Compositing")."""
+        return self.request("set_mask", {"clip": clip, **fields})
+
+    def set_transform(self, clip, **fields):
+        """Places the clip's picture: x, y (canvas fractions), scale, rotation (degrees), opacity; only those given."""
+        return self.request("set_transform", {"clip": clip, **fields})
+
+    def crop_clip(self, clip, x, y, width, height):
+        """Crops the clip's picture to a rectangle of its source pixels."""
+        return self.request("crop_clip", {"clip": clip, "x": x, "y": y, "width": width, "height": height})
+
+    def add_adjustment_layer(self, start_frame, frames, track=None):
+        """An adjustment layer `frames` long from `start_frame` (on `track`, else the highest video track).
+        -> clip id"""
+        args = {"start_frame": int(start_frame), "frames": int(frames)}
+        if track is not None:
+            args["track"] = track
+        return self.request("add_adjustment_layer", args)["clip"]
+
     def add_track(self, kind):
         """Adds a track: "video" (composited over every video track) or "audio". -> its name ("v1", "a0", ...)"""
         return self.request("add_track", {"kind": kind})["track"]
@@ -405,9 +435,13 @@ class Driver:
         return []
 
     # ------------------------------------------------------------ output and jobs
-    def export(self, path, wait=True, timeout=EXPORT_TIMEOUT, raw=False):
-        """Exports the timeline to `path`. -> Job {"job", "status", "path", "error", "fraction"}"""
-        return self.request("export", {"path": path if raw else path_arg(path), "wait": bool(wait)}, timeout=timeout)
+    def export(self, path, wait=True, timeout=EXPORT_TIMEOUT, raw=False, lossless=False):
+        """Exports the timeline to `path` (lossless: the user's lossless quality, PROTOCOL.md "Exports").
+        -> Job {"job", "status", "path", "error", "fraction"}"""
+        args = {"path": path if raw else path_arg(path), "wait": bool(wait)}
+        if lossless:
+            args["lossless"] = True
+        return self.request("export", args, timeout=timeout)
 
     def jobs(self):
         """-> [Job]"""

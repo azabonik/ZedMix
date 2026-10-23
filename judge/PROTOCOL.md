@@ -180,7 +180,7 @@ what it leaves behind, never its message or code.
 | `apply_lut` | `{"clip", "path"}` | `{}`: applies the colour look-up table (a `.cube` file) at `path` to the clip. Errors: `bad_request` when `clip` or `path` is missing or not a string; `product_error` when the clip does not exist, or the path is not a local file the editor may read: a URL or another protocol, a path on a network computer the user has not allowed (that computer then waits for the user, see `list_hosts`), or a file of the editor's own allowed list in any spelling; and when the clip's track is locked (`set_track`). |
 | `add_text` | `{"clip", "text", "style": {}}` | `{"text": id}`: a text overlay on the clip, shown for the whole clip. `style` fields, all optional: `position` (a placement name such as `bottom`, `top`, `center`), `x`, `y` (0..1), `font` (a font name or a font file path), `font_size`, `color`, `outline_color`, `outline_width`, `shadow_color`, `shadow_x`, `shadow_y`, `box` (bool), `box_color`, `box_border`. A colour is a name (`yellow`), `#rrggbb`, `#rrggbbaa`, `0xRRGGBB` or `name@alpha` (`white@0.5`). The adapter passes every value on unchanged, also one of another type: tests send hostile values on purpose, and the editor accepts or refuses each. |
 | `make_proxy` | `{"asset"}` | `{}`: makes the editor's lower-resolution working copy of the asset (in the editor's own folders). Errors: `bad_request` when `asset` is missing; `product_error` when the asset does not exist or its media is offline, for example while it waits for its network computer. |
-| `thumbnail` | `{"asset", "time"}` | `{"path": str or null}`: makes a still image of the asset at `time` seconds, where the editor keeps such images. Errors: `bad_request` when `asset` is missing or `time` is not a number; `product_error` as for `make_proxy`. |
+| `thumbnail` | `{"asset", "time"}` | `{"path": str or null}`: makes a still image of the asset at `time` seconds, where the editor keeps such images; read as its image format is read (a JPEG as BT.601 full range), it shows the asset's colours. Errors: `bad_request` when `asset` is missing or `time` is not a number; `product_error` as for `make_proxy`. |
 | `set_project` | `{"width"?, "height"?, "fps"?}` | `{}`: the output canvas: the size and frame rate of every export and rendered frame. See "The canvas" below. |
 | `undo`, `redo` | `{}` | `{}` |
 | `get_state` | `{}` | a **State** (below) |
@@ -207,8 +207,11 @@ State:
 A track's `name` is its label (`set_track`), and `locked`, `muted` and `hidden` its settings. A clip's `ramp` says
 whether it plays a speed ramp (`set_speed_ramp`; its `speed` is then 1), and its `transition` is the transition that
 enters it (`{"kind", "frames"}`, see `set_transition`) or null. `markers` are the timeline's markers in frame order,
-each with its `name` or null. An adapter whose State has no such field leaves it out; the tests that need it then
-fail.
+each with its `name` or null. A clip's `blend_mode` is its blend mode (`set_blend_mode`; `normal` when none was set),
+its `mask` its shape mask (`set_mask`: `{"shape", "x", "y", "w", "h", "rotation", "feather", "roundness", "invert"}`,
+the values as the editor keeps them, clamped) or null, and `adjustment` is true for an adjustment layer
+(`add_adjustment_layer`; its `asset` is null). An adapter whose State has no such field leaves it out; the tests that
+need it then fail.
 
 ### The canvas
 
@@ -268,6 +271,29 @@ Only the keys (and `lens` with fill 0) make pixels transparent. A clip smaller t
 is fitted in the middle, and the rest of the canvas is transparent: the tracks below show there, also under any
 effect.
 
+A key's `color` `auto` is resolved when the effect is added: the editor samples the clip's background (the border of
+its frames) and keeps that colour, so get_state shows the colour it found, never `auto` (for `lumakey`, `auto` sets
+`threshold` to the background's brightness instead).
+
+| op | args | result |
+|---|---|---|
+| `detect_key_colour` | `{"clip"}` | `{"color": hex, "confidence": number}`: the colour `auto` would key on this clip (as `0xRRGGBB` or `#rrggbb`, red first) and the share 0..1 of the sampled border that has it (near 1: a flat screen). It reads the clip's source as an export does (its colour tags; see "Exports"), and changes nothing. Errors: `product_error` when the clip does not exist or has no picture. |
+
+### Compositing
+
+How a clip's picture is laid over the tracks below it, as the user sets it: its blend mode, its shape mask, its
+transform (position, scale, rotation, opacity), its crop, and adjustment layers.
+
+| op | args | result |
+|---|---|---|
+| `set_blend_mode` | `{"clip", "mode"}` | `{}`: how the clip's picture combines with the composite of the video tracks below it. Modes, by the W3C compositing names (a base colour b below, the layer's colour s, each 0..1): `normal` (plain layering, the default), `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion` as the W3C formulas, and `add` (min(1, b + a s), with a the layer's opacity). The result is mixed with the base by the layer's opacity and alpha (its keys, mask, letterbox), so only its visible part blends. Only the picture blends: the clip's own texts draw normally on top. Clips joined by a transition (`set_transition`) blend as one, so the mode is set on every clip of the run. One undo step. `mode` is passed on unchanged. Errors: `product_error` for a mode it does not have, an adjustment layer, a clip that does not exist, a locked track. |
+| `set_mask` | `{"clip", "shape"?, "x"?, "y"?, "w"?, "h"?, "rotation"?, "feather"?, "roundness"?, "invert"?}` | `{}`: a shape mask in the clip's own picture (after its crop and fit; it moves, scales and turns with the clip's transform): only the part inside the shape shows (`invert` true: the part outside), the tracks below show elsewhere, and the clip's letterbox stays transparent either way. `shape`: `rect`, `ellipse`, `linear` (a half plane: the line through x, y at `rotation`; it keeps the side above the line at rotation 0), `mirror` (a band of height `h` through x, y at `rotation`), or `none` (removes the mask). `x`, `y`: the centre, as fractions of the picture's width and height (0.5, 0.5 by default; v0.2.0 keeps -0.5..1.5); `w`, `h`: the size as fractions of the picture's width and height (a new `rect` or `ellipse` is a centred square or circle half the picture's short side; v0.2.0 keeps 0.01..2); `rotation`: degrees clockwise (kept as the same angle in -180..180); `feather`: the width of a soft edge, 0..1 of the picture's short side (0: crisp); `roundness`: a rect's corner radius 0..1; `invert`. Only the fields sent change; a value out of range is clamped. It multiplies the clip's alpha, so it combines with keys and alpha media. On an adjustment layer it limits where the layer's look applies (in canvas space). One undo step. Errors: `bad_request` when no field is given or one has the wrong type; `product_error` for a shape it does not have, a clip that does not exist, a locked track. |
+| `set_transform` | `{"clip", "x"?, "y"?, "scale"?, "rotation"?, "opacity"?}` | `{}`: places the clip's picture after it is fitted to the canvas: `x`, `y` move it by fractions of the canvas's width and height (0: centred, + right and down), `scale` (1: fitted), `rotation` (degrees clockwise), `opacity` 0..1. Only the fields sent change. One undo step. Errors: `bad_request` when no field is given or one is not a number; `product_error` when the editor refuses (a clip that does not exist, a locked track). |
+| `crop_clip` | `{"clip", "x", "y", "width", "height"}` | `{}`: crops the clip's picture to the rectangle of its source pixels with its top left corner at x, y (a rectangle that runs off the picture's right or bottom edge is moved in), which is then fitted to the canvas like a whole picture. One undo step. Errors: `bad_request` for a missing or non-number field; `product_error` when the editor refuses. |
+| `add_adjustment_layer` | `{"track"?, "start_frame", "frames"}` | `{"clip": id}`: an adjustment layer: a clip with no media, `frames` long from `start_frame` on `track` (left out: the highest video track), whose colour, effects and mask apply to the composite of every video track below it while it plays. `apply_effect`, `apply_colour`, `set_mask`, `move_clip` and `remove_clip` work on it as on a clip; `set_blend_mode` is refused. Errors: `bad_request` for a track that does not exist or a field of the wrong type; `product_error` when the editor refuses. |
+
+`clear_effects` removes a clip's blend mode, mask and transform too.
+
 ### Speed and time
 
 A clip's speed, its speed ramp, a freeze, a reverse and smooth slow motion, as the user sees them. Positions and
@@ -315,10 +341,10 @@ until 70 %, then up to 8x at the end). Another editor's adapter maps them to its
 
 | op | args | result |
 |---|---|---|
-| `export` | `{"path", "wait": true}` | a **Job**. With `wait` true, the call returns when the export has finished. With `wait` false, it returns at once with a running job. See "Exports" below. |
+| `export` | `{"path", "wait": true, "lossless"?: bool}` | a **Job**. With `wait` true, the call returns when the export has finished. With `wait` false, it returns at once with a running job. `lossless` true: the user's lossless quality (see "Exports"). See "Exports" below. |
 | `jobs` | `{}` | `{"jobs": [Job]}`: the exports, and the copies `reverse_clip` and `smooth_slow_motion` make. |
 | `cancel` | `{"job"}` | `{"canceled": bool}`: `canceled` true when the editor accepted the cancel of the running job. The answer may come before the job's work has stopped (v0.2.0 answers once its bake has stopped), so the judge does not take it as proof: from the answer on, the job ends `canceled` in `jobs` and never turns `done`, and a canceled copy (`reverse_clip`, `smooth_slow_motion`) never changes the project or leaves a file, also later. The tests look at the State and the editor's files at once and again after one and a half times as long as a full bake of the same media takes, and 2 s more (measured on a clean bake of another span of it). |
-| `render_frame` | `{"time", "path"}` | `{"path"}`: one composited frame of the timeline at `time` seconds, written as a PNG at `path`. A time past the end shows the last frame. |
+| `render_frame` | `{"time", "path"}` | `{"path"}`: one composited frame of the timeline at `time` seconds, written as a PNG at `path` (RGB: the colours an export shows there). A time past the end shows the last frame. |
 | `render_preview` | `{}` | `{}`: renders the editor's preview of the whole timeline, where the editor keeps it (the user's playback); `render_frame` may then be served from it, and must show the same frames. |
 
 Job: `{"job": id or null, "status": "running" | "done" | "error" | "canceled", "path": str or null, "error": str or
@@ -332,6 +358,17 @@ null, "fraction": number or null}`.
 - The video is the project canvas: its width, height and fps (not the size or rate of the media placed on it), with
   square pixels. It covers the timeline from frame 0 to the State's `length_frames`.
 - There is an audio stream when any clip on the timeline has audio.
+- Colour: the video is BT.709 at limited range, and all four of its colour tags (matrix, primaries, transfer, range)
+  say so, so every player shows the same colours. Each source is read as players read it: by its colour tags (a
+  matrix or a range tag alone counts), and where a tag is missing, an untagged HD picture (720 lines or more, counted
+  in the coded picture, before any rotation) as BT.709, an SD one as BT.601, untagged VP9 as BT.601, full range with
+  no matrix as BT.601 (as a JPEG), limited range unless tagged full; a picture with no matrix at all (a PNG) as RGB. So
+  a source coded the way its tags (or, untagged, the rule) say exports with its true colours. The same holds for the
+  copies the editor makes of a source (a reversed or slowed copy, a still) and for a motion graphic: each exports with
+  the colours of what it was made from.
+- `lossless` true: the user's lossless quality: the video is coded without loss from the editor's own composite
+  (v0.2.0: H.264 at quality 0, in `yuv420p`), so the judge reads the compositing's own values, not codec noise. An
+  editor that has no lossless export answers `product_error`, and the tests that need it fail.
 - With `wait` true, `status` is the editor's own: `error` or `canceled` (with the editor's text in `error`) when the
   editor reports one, even when it left a file at the path; `done` only when the editor reports no error and the file
   is there.

@@ -151,7 +151,16 @@ PRINT_LOCK = threading.Lock()
 # The fixtures judge/fixtures/make.sh makes only when a test of the run names them in EXTRA_MEDIA (the same list as
 # make.sh's OPTIONAL): the edit tests' media.
 OPTIONAL_MEDIA = ("idx.mp4", "idx2997.mp4", "skew.mp4", "cutout.mkv", "move.mp4", "tone300.m4a", "chirp.m4a",
-                  "long.mp4")
+                  "long.mp4",
+                  # test_masks' stills and alpha clip
+                  "mk-bands.png", "mk-greys.png", "mk-blue.png", "mk-red.png", "mk-white.png", "mk-grey64.png",
+                  "mk-redsq.png", "mk-greenbox.png", "mk-disc.mkv",
+                  # test_key's pictures
+                  "key-grey.mp4", "key-blue-p.mp4", "key-blue-l.mp4", "key-green.mp4", "key-black.mp4", "key-noisy.mkv",
+                  # test_colorspace's sources
+                  "cs-hd.mp4", "cs-709.mp4", "cs-601.mp4", "cs-sd601.mp4", "cs-sd.mp4", "cs-sd709.mp4",
+                  "cs-full709.mp4", "cs-fullnm.mp4", "cs-partial.mp4", "cs-vp9.webm", "cs-rotsd.mp4", "cs-grid.png",
+                  "cs-grid.jpg", "cs-cut601.mkv", "cs-testsrc.mp4", "cs-gridll.mp4", "cs-green.mp4")
 
 
 # ---------------------------------------------------------------- no access through /proc or ptrace

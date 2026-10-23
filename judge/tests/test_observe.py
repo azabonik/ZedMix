@@ -6,7 +6,8 @@ Known properties (judge/fixtures/make.sh): a.mp4 and b.mp4 are 6 s, 1280x720, 30
 digital silence from 2.0 to 3.5 s, 5.5 s in all.
 
 The side-effect observations (the loopback listener, the strace form of a name and the trace search, the text
-substitution, the marker search and the secret search) are checked on inputs made here, and the edit tests' refusal
+substitution, the marker search and the secret search) and the colour instruments (a picture read as exact RGB, plane
+differences, the readings) are checked on inputs made here, and the edit tests' refusal
 check (edits.refused_unchanged) on a model of an editor's undo history.
 """
 import json
@@ -19,7 +20,7 @@ import observe
 
 PORT_BOUND = False
 TIMEOUT = 300
-CHECKS = 41
+CHECKS = 44
 
 
 def run(t):
@@ -195,6 +196,25 @@ def side_effects(t):
     t.check("colour: a magenta picture reads as magenta, not as green",
             observe.colour_is(rgb, (255, 0, 255)) and not observe.colour_is(rgb, (0, 255, 0))
             and not observe.colour_is(None, (255, 0, 255)), rgb)
+    try:
+        pic = observe.Picture(png, 0)
+        got = (pic.w, pic.h, pic.mean(32, 18, 3), [tuple(round(v) for v in c) for c in pic.cells(2, 2)])
+    except observe.Unmeasurable as e:
+        got = f"unmeasurable: {e}"
+    t.check("a picture read as exact RGB: its size, a block's mean and each cell's of a grid (a magenta PNG)",
+            got == (64, 36, (255, 0, 255), [(255, 0, 255)] * 4), got)
+    diffs = (observe.plane_diff(bytes(100), bytes(98) + bytes([5, 9]), 0, 100),
+             observe.plane_diff(bytes([1, 2, 3]), bytes([1, 2, 3]), 0, 3))
+    t.check("plane differences: the largest, the 99th percentile and the mean of |a - b|",
+            diffs == ({"max": 9, "p99": 5, "mean": 0.14}, {"max": 0, "p99": 0, "mean": 0.0}), diffs)
+    readings = []
+    for m, r in (("bt709", "tv"), ("bt601", "pc"), ("bt2020", "tv"), ("bt709", "full")):
+        try:
+            readings.append("in_color_matrix=" + m in observe.read_as(m, r) and f"in_range={r}" in observe.read_as(m, r))
+        except ValueError:
+            readings.append("refused")
+    t.check("a reading names its matrix and range (BT.601 or BT.709, tv or pc); any other is refused",
+            readings == [True, True, "refused", "refused"], readings)
     spellings = {s: observe.hex_colour(s) for s in ("0xE02020", "#e02020", "0Xe02020", " #E02020 ", "0x2020E0",
                                                     "e02020", "#e020", "red", "rgb(224,32,32)", 0xE02020)}
     t.check("hex colour: 0xE02020, #e02020 in any case are the same red (red first), 0x2020E0 is blue, and a name, "

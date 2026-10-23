@@ -946,6 +946,64 @@ class Adapter:
                                      "toIndex": arg_int(a, "to_index")})
         return {}
 
+    # ------------------------------------------------------------ keys and compositing (batch 3b)
+    def op_detect_key_colour(self, a):
+        j = self.call("detect_key_color", {"clipId": arg_str(a, "clip")})
+        color, conf = j.get("color"), j.get("confidence")
+        if not isinstance(color, str) or isinstance(conf, bool) or not isinstance(conf, (int, float)):
+            raise OpError("adapter_error", f"detect_key_color answered no colour and confidence: {json.dumps(j)[:300]}")
+        return {"color": color, "confidence": conf}
+
+    def op_set_blend_mode(self, a):
+        # The mode is passed on unchanged: a test sends one the editor does not have, and the editor refuses it.
+        self.call("set_clip_blend_mode", {"clipId": arg_str(a, "clip"), "mode": arg_str(a, "mode")})
+        return {}
+
+    MASK_NUMBERS = ("x", "y", "w", "h", "rotation", "feather", "roundness")
+
+    def op_set_mask(self, a):
+        """v0.2.0's set_clip_mask; shape "none" is its null (the mask removed). Other shapes are passed on unchanged."""
+        args = {"clipId": arg_str(a, "clip")}
+        shape = arg_str(a, "shape", required=False)
+        if shape is not None:
+            args["shape"] = None if shape == "none" else shape
+        for k in self.MASK_NUMBERS:
+            v = arg_num(a, k, required=False)
+            if v is not None:
+                args[k] = v
+        inv = self._bool(a, "invert")
+        if inv is not None:
+            args["invert"] = inv
+        if len(args) == 1:
+            raise bad("no mask field given")
+        self.call("set_clip_mask", args)
+        return {}
+
+    def op_set_transform(self, a):
+        args = {"clipId": arg_str(a, "clip")}
+        for k in ("x", "y", "scale", "rotation", "opacity"):
+            v = arg_num(a, k, required=False)
+            if v is not None:
+                args[k] = v
+        if len(args) == 1:
+            raise bad("no transform field given")
+        self.call("set_clip_transform", args)
+        return {}
+
+    def op_crop_clip(self, a):
+        self.call("crop_clip", {"clipId": arg_str(a, "clip"), **{k: arg_num(a, k) for k in ("x", "y", "width", "height")}})
+        return {}
+
+    def op_add_adjustment_layer(self, a):
+        args = {"startFrame": arg_int(a, "start_frame"), "durationFrames": arg_int(a, "frames")}
+        if a.get("track") is not None:
+            args["trackIndex"] = self.track_index(a["track"])
+        j = self.call("add_adjustment_clip", args)
+        cid = find_key(j.get("clip") or j, ["id", "clipId"])
+        if not cid:
+            raise OpError("adapter_error", f"add_adjustment_clip returned no clip id: {json.dumps(j)[:300]}")
+        return {"clip": cid}
+
     def op_add_track(self, a):
         """A new video track (composited over every video track there is) or audio track. Its name is the one
         get_state gives it: the track with the trackIndex add_track returned."""
@@ -1004,9 +1062,15 @@ class Adapter:
             v = (c.get("effects") or {}).get("speed", c.get("speed", 1))
             return v if isinstance(v, (int, float)) and v > 0 else 1
         overlays, effects, texts = {}, {}, {}  # clip id -> its graphics, effects and texts (get_state's clips;
-        for t in st.get("tracks", []):        # timeline_summary does not list them)
+        looks = {}                            # timeline_summary does not list them), and its blend mode, mask and
+        for t in st.get("tracks", []):        # whether it is an adjustment layer
             for c in t.get("clips", []) or []:
                 overlays[c.get("id")] = [g.get("id") for g in c.get("graphics") or [] if isinstance(g, dict)]
+                cfx = c.get("effects") or {}
+                mask = cfx.get("mask")
+                looks[c.get("id")] = {"blend_mode": cfx.get("blendMode") or "normal",
+                                      "mask": dict(mask) if isinstance(mask, dict) else None,
+                                      "adjustment": c.get("adjustment") is True}
                 fx = (c.get("effects") or {}).get("filters") or []
                 effects[c.get("id")] = [
                     {"id": f.get("id"), "effect": f.get("type"), "enabled": f.get("enabled") is not False,
@@ -1032,7 +1096,9 @@ class Adapter:
                                                                            dict),
                                   "transition": transition_of(c), "graphics": overlays.get(c.get("clipId"), []),
                                   "effects": effects.get(c.get("clipId"), []),
-                                  "texts": texts.get(c.get("clipId"), [])})
+                                  "texts": texts.get(c.get("clipId"), []),
+                                  **looks.get(c.get("clipId"), {"blend_mode": "normal", "mask": None,
+                                                                "adjustment": c.get("adjustment") is True})})
                 tracks.append({"track": f"{prefix}{n}", "name": t.get("name"), "locked": bool(t.get("locked")),
                                "muted": bool(t.get("muted")), "hidden": bool(t.get("hidden")), "clips": clips})
         markers = [{"frame": m.get("frame"), "name": m.get("name")} if isinstance(m, dict) else {"frame": m, "name": None}
@@ -1056,7 +1122,9 @@ class Adapter:
         wait = a.get("wait", True)
         if not isinstance(wait, bool):
             raise bad(f"'wait' must be true or false, got {wait!r}")
-        j = self.call("export_video", {"outputPath": path, **({} if wait else {"background": True})})
+        # lossless: v0.2.0's quality 0 (H.264 at quality 0, lossless in the yuv420p it writes)
+        lossless = {"quality": 0} if self._bool(a, "lossless") else {}
+        j = self.call("export_video", {"outputPath": path, **lossless, **({} if wait else {"background": True})})
         job = self.job_of(j)
         if wait:
             # The editor's own word first: an error or a cancel it reports stays one, even when it left a (partial)
@@ -1884,6 +1952,69 @@ def self_test():
                 [(c["ramp"], c["transition"]) for c in tr["clips"]], st["markers"]),
                (("V1", True, False, True), [(True, None), (False, {"kind": "dissolve", "frames": 10})],
                 [{"frame": 30, "name": "early"}, {"frame": 120, "name": None}]))
+        # Keys and compositing (batch 3b operations), on canned replies.
+        sent = []
+
+        def look_reply(n, a):
+            sent.append((n, a))
+            if n == "timeline_summary":
+                return {"tracks": tracks3, "canvas": {"width": 64, "height": 64, "fps": 30}}
+            if n == "detect_key_color":
+                return {"color": "0x808080", "confidence": 0.98}
+            if n == "add_adjustment_clip":
+                return {"clip": {"id": "clip_adj", "adjustment": True}}
+            if n == "export_video":
+                return {"path": partial}
+            return {"ok": True}
+        ad = adapter(look_reply)
+        calls = [("detect_key_colour", {"clip": "c1"}),
+                 ("set_blend_mode", {"clip": "c1", "mode": "glow"}),
+                 ("set_mask", {"clip": "c1", "shape": "ellipse", "w": 0.5, "feather": 5, "invert": True}),
+                 ("set_mask", {"clip": "c1", "shape": "none"}),
+                 ("set_transform", {"clip": "c1", "scale": 0.5, "x": 0.25, "opacity": 0.6}),
+                 ("crop_clip", {"clip": "c1", "x": 3, "y": 5, "width": 639, "height": 359}),
+                 ("add_adjustment_layer", {"start_frame": 0, "frames": 30, "track": "v1"}),
+                 ("export", {"path": partial, "wait": True, "lossless": True})]
+        results = [op(ad, n, a).get("result") for n, a in calls]
+        expect("detect_key_colour ... export lossless: the batch 3b operations answer as PROTOCOL.md says",
+               results[:7] + [results[7].get("status") if results[7] else None],
+               [{"color": "0x808080", "confidence": 0.98}, {}, {}, {}, {}, {}, {"clip": "clip_adj"}, "done"])
+        expect("...and map to v0.2.0's tools (a mode passed on unchanged, shape none to null, lossless to quality 0)",
+               [x for x in sent if x[0] != "timeline_summary"],
+               [("detect_key_color", {"clipId": "c1"}), ("set_clip_blend_mode", {"clipId": "c1", "mode": "glow"}),
+                ("set_clip_mask", {"clipId": "c1", "shape": "ellipse", "w": 0.5, "feather": 5, "invert": True}),
+                ("set_clip_mask", {"clipId": "c1", "shape": None}),
+                ("set_clip_transform", {"clipId": "c1", "x": 0.25, "scale": 0.5, "opacity": 0.6}),
+                ("crop_clip", {"clipId": "c1", "x": 3, "y": 5, "width": 639, "height": 359}),
+                ("add_adjustment_clip", {"startFrame": 0, "durationFrames": 30, "trackIndex": 2}),
+                ("export_video", {"outputPath": partial, "quality": 0})])
+        expect("set_mask or set_transform with no field, a mask number or flag of the wrong type, a crop without its "
+               "height, lossless that is not a boolean, an adjustment layer on a track that does not exist: bad_request",
+               [op(adapter(look_reply), n, a)["error"]["code"] for n, a in (
+                   ("set_mask", {"clip": "c1"}), ("set_transform", {"clip": "c1"}),
+                   ("set_mask", {"clip": "c1", "w": "wide"}), ("set_mask", {"clip": "c1", "invert": 1}),
+                   ("crop_clip", {"clip": "c1", "x": 0, "y": 0, "width": 9}),
+                   ("export", {"path": partial, "lossless": "yes"}),
+                   ("add_adjustment_layer", {"start_frame": 0, "frames": 30, "track": "v9"}))],
+               ["bad_request"] * 7)
+
+        def look_state(n, a):
+            if n == "timeline_summary":
+                return {"tracks": [{"kind": "video", "trackIndex": 0, "clips": [
+                    {"clipId": "c1", "assetId": "a1", "startFrame": 0, "durationFrames": 30, "sourceInFrame": 0,
+                     "sourceOutFrame": 30},
+                    {"clipId": "c2", "startFrame": 30, "durationFrames": 30, "sourceInFrame": 0, "sourceOutFrame": 30,
+                     "adjustment": True}]}], "canvas": {"width": 64, "height": 64, "fps": 30}, "totalFrames": 60}
+            mask = {"shape": "ellipse", "x": 0.5, "y": 0.5, "w": 0.01, "h": 0.5, "rotation": -90, "feather": 1,
+                    "roundness": 0, "invert": False}
+            return {"assets": [], "tracks": [{"clips": [
+                {"id": "c1", "effects": {"mask": mask, "blendMode": "multiply"}},
+                {"id": "c2", "adjustment": True, "effects": {}}]}]}
+        cs = op(adapter(look_state), "get_state", {})["result"]["tracks"][0]["clips"]
+        expect("get_state: each clip's blend mode (normal when none), mask (or null) and whether it is an adjustment "
+               "layer (its asset null)",
+               [(c["blend_mode"], c["mask"] and c["mask"]["w"], c["adjustment"], c["asset"]) for c in cs],
+               [("multiply", 0.01, False, "a1"), ("normal", None, True, None)])
         # The command-line installer: the world, and the installer's environment, on a fake build.
         scratch = os.path.realpath(os.path.join(tmp, "scratch"))
         build = os.path.join(tmp, "build")
