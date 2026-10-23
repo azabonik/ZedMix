@@ -264,10 +264,14 @@ def copies(t, d, o):
             path = next((a.get("path") for a in after.get("assets", []) if c and a.get("id") == c.get("asset")), None)
             made = (c is not None and c.get("asset") in new and isinstance(path, str)
                     and os.path.realpath(path).startswith(os.path.realpath(t.scratch) + os.sep))
+            try:  # the judge's own look: a video file there
+                made = made and observe.video_stream(path) is not None
+            except observe.Unmeasurable as e:
+                made, what = False, what or f"the copy {path} cannot be read: {e}"
             name = o.export(f"{bake}-{media}")
             at = 0.3 if bake == "reverse" else 0.6
             t.measure(f"{label}, {'reversed' if bake == 'reverse' else 'slowed to 0.5x with blended frames'}: the clip "
-                      f"plays the editor's new copy (in the test's folder), and the export shows the true colours "
+                      f"plays the editor's new copy (a video in the test's folder), and the export shows the true colours "
                       f"(within 4)",
                       lambda name=name, at=at, made=made, c=c, path=path, what=what: (
                           made or what or f"no new copy: the clip {c}, its file {path}", o.error(name, at)),
@@ -395,7 +399,7 @@ def graphics(t, d, o):
         fresh(d, 1280, 720)
         try:
             d.set_graphics_renderer(renderer)
-            r, said = rendered(lambda: d.add_graphic(code=GRAPHIC, duration_s=1))
+            r, said = rendered(lambda: d.add_graphic(code=GRAPHIC, duration_s=0.2))
         except drv.JudgeError as e:
             r, said = None, f"the renderer could not be chosen: {e}"
         if r is None:
@@ -403,7 +407,7 @@ def graphics(t, d, o):
         else:
             o.export(f"graphic-{renderer}")
         def colours(renderer=renderer):
-            cells = observe.Picture(o.path(f"graphic-{renderer}"), 0.5, AS_709).cells(4, 2, half=6)
+            cells = observe.Picture(o.path(f"graphic-{renderer}"), 0.1, AS_709).cells(4, 2, half=6)
             n = HELD[renderer]
             return worst(cells[:n], GRAPHIC_COLOURS[:n]) + ([tuple(round(v) for v in c) for c in cells],)
         t.measure(name, colours, lambda v: v[0] <= 4, "<= 4")

@@ -2,7 +2,7 @@
 # .github/workflows/judge.yml, sorted by path from the repository root (scripts/check-judge-lock.mjs).
 # The agents that rewrite the editor must not change the judge. The gauntlet reviews a change to this file on its PR.
 56ffaefe1bb97981a6cf275e4bf8af79cd32f79b5b01e05856ad83dff279e2c4  .github/workflows/judge.yml
-9f4577bd9f7dd292d6425f54b3e5800f5837dae7b52143f4c9ed31386452c091  judge/PORTING.md
+b4ff647a1633a298c56abc2148db5b913919bffd0b377a34732ac21c7e217134  judge/PORTING.md
 82b2e694894ee3b6966c4447872a04815d35c3902ad05d2398f6132a3f7b5b08  judge/PROTOCOL.md
 2fa9f913e640a0131ebf903a722e107b879130e54e2f16e640c9d67231450b0d  judge/README.md
 135607a6684c676faa65db08b0bab86175008b482ee908d4fe69f7642d204b9b  judge/adapters/v020/adapter.py
@@ -29,7 +29,7 @@ c623a4a816d704ae2318996eb9aedf67c07c8306d3d47eb073ea5ae15279b7cd  judge/fixtures
 f688c05d5847e427f8a0220c750ad691d40723fdc9a469d32e7cb0146c872262  judge/run.py
 30b0def52f27210cf38e57d7c199755898d8a92dce57e0d00e7543710627dd41  judge/selftest.py
 93e86a8a5ca44ecbbfaeccb797801b591e2df33d3ebb92bb9b9d8bafda8c7241  judge/tests/test_cli_migrate.py
-405d7cbcb3a81ad542792d6cbb7fc01e7578f92747b354c5bf070e81eabec646  judge/tests/test_colorspace.py
+ee6b17d41641690fef94373447ebd25d8b0c69cf608bf83d0fc2c51e10be7a15  judge/tests/test_colorspace.py
 5390b3b4ada9fbd28f06de83d68448299fc30277758ece60aac243b40cf25489  judge/tests/test_cuts.py
 88f47b27f7fbce832a1829632ccc7a77c5d082433dbd9a9190af29fe23a6d5e3  judge/tests/test_effect_looks.py
 faf0f4927d3c5d1f99926eadeadb3117517eabd2807033f532c243d4ad47b52b  judge/tests/test_effects.py
