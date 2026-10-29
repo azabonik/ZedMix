@@ -571,6 +571,21 @@ What it defends against:
   `--as-user` (CI) strace runs as root and starts the adapter as the other user (`strace -u`; it is probed that way
   too), so no process of the traced tree can end, stop or attach to strace, read its memory or open its descriptors, and
   the copy of the trace is in the runner's `records/`.
+- **An adapter that hands in another file for one the editor was asked to make**: every file a test asks the
+  editor to make (an export, a rendered frame, a reversed or slowed copy, a freeze frame's still, a thumbnail) must
+  show content that only the requested operation on that clip's own source, at the requested moment, produces. The
+  tests that grade such files (the compositing, key and colour tests of batch 3b, and the effects test) hold to it in
+  three ways. Each source carries a mark of its own (the colour test's sources show their own number and each frame's
+  index in a band, `make.sh`), and the check reads that mark in the file. Each request names a moment, span, order or
+  length that no earlier file of the test and no file of the judge shows: two exports that would look the same by
+  design play different spans or have different lengths, the thumbnail is asked for at a frame no still or render
+  shows, and a still or thumbnail is made while a picture on the track above covers the timeline, so a frame of the
+  composite (`render_frame`) does not pass for the clip's own frame. And a copy, a still or a thumbnail at a path the
+  adapter reports must be a new file by the judge's own look (device, inode and bytes against every file listed
+  before the request). So no earlier file of the editor's, no file of the judge's (its exports, renders and media),
+  no copy of another clip and no copy of any of them with bytes added, linked, moved or renamed passes the check.
+  The run's own record of this is the substitution table in `PORTING.md` (batch 3b): for each file the tests read,
+  which earlier file could stand in, and why the check rejects it.
 - **A file format that defeats the crafted inputs**: a rewrite whose saved files do not hold the values as given
   turns the checks on crafted inputs into not applicable, each listed by name and counted on the `JUDGE` line, never
   into passes; `--strict` fails them.
@@ -648,6 +663,13 @@ What it does not defend against:
     dumpable, so a process of the same user can read its memory and send it signals: ending strace fails the check
     (the trace ended before stop), but stopping it with `SIGSTOP` holds the editor's traced calls until strace runs
     again. The copy of the trace (`<test>.adapter-strace.log`) is a file the editor can change; no check reads it.
+- An adapter that makes a file with the right content itself: one that runs its own encoder on the media, or that
+  rebuilds the file from other operations of the editor (a render of the source alone on a timeline of its own, a
+  trim of an earlier export) passes for the operation the test asked for. The checks hold each file to what the
+  operation makes, not to who made it; what the judge rules out is that a file that already exists stands in (see
+  "An adapter that hands in another file" above). A check that two files of one project are the same (an export or a
+  render before a save and after a load) cannot tell a copy of the first from a true second one: there the State and
+  the other renders carry the check.
 - A fork without exec made by non-Python code in the test process (a C extension calling `fork()`): Python's fork
   hook does not run, so the child keeps the result pipe and stays non-dumpable, and the sweep cannot find it.
 - A change that deletes both `judge.yml` and the gate step in `ci.yml` (which the lock does not cover). Only review

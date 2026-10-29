@@ -28,7 +28,7 @@ import observe
 
 PORT_BOUND = True
 TIMEOUT = 1500
-CHECKS = 36
+CHECKS = 37
 
 LUT_TEXT = "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n"
 LEGIT_COLOURS = ["#ffe14d", "#000000cc", "0xFFE14D", "yellow", "white@0.5", "black@0.55"]
@@ -44,6 +44,14 @@ BLUR, VIGNETTE, SIMILARITY, BLEND, SPEED = 2.345, 0.4567, 0.1234, 0.0567, 1.25
 TRANSFORM = {"x": 0.0321, "scale": 0.9321, "opacity": 0.8321}
 MASK = {"w": 0.8432, "h": 0.7432, "feather": 0.0432}
 KEYFRAMES = [{"frame": 0, "value": 0.9543}, {"frame": 40, "value": 0.7543}]
+# An eased motion (section 11): y from EASED[0] at the clip's first frame to EASED[1] at frame 40, easeOut. Halfway,
+# at EASE_AT (frame 20), eased and linear motion put the picture tens of pixels apart: the frame rendered there after
+# the load must be the one rendered before the save, and the same keyframes made linear must render another one.
+EASED = (-0.1, 0.1)
+EASE_AT = 20.5 / 30
+# SSIM of the frame at EASE_AT before the save against the same keyframes made linear (after the load): v0.2.0 and
+# this tree read 0.7906 (FFmpeg 4.4) and 0.795 (9.0.2-17); the same frame after the load reads 1.0.
+EASE_APART = 0.95
 RAMP = [(0, 1), (1.0, 1.75)]  # (source s, speed)
 # Section 11's second frame: the first clip alone (frame 34: after the sepia layer, frames 0 to 29, and before the
 # dissolve into the second clip at 48), whose 32 block means must match within GRADED_TOL after the load.
@@ -292,11 +300,13 @@ def body(t, canary):
     # The fields of batch 3a's and 3b's operations: a crop, a transform with opacity, keyframed opacity, a blend mode,
     # a feathered mask, a second clip with a speed ramp entered by a dissolve, and an adjustment layer with an effect
     # on a track above. get_state shows the blend mode, the mask, the ramp, the transition, the layer and every
-    # clip's effects; the crop, the transform and the keyframes show in the frame rendered after the load.
+    # clip's effects; the crop, the transform and the keyframes show in the frames rendered after the load (the eased
+    # motion in a frame halfway through it).
     sw, sh, _ = observe.size(src)
     d.crop_clip(cl, 8, 6, sw - 24, sh - 18)
     d.set_transform(cl, **TRANSFORM)
     d.set_keyframes(cl, "opacity", KEYFRAMES)
+    d.set_keyframes(cl, "y", [{"frame": 0, "value": EASED[0]}, {"frame": 40, "value": EASED[1], "ease": "easeOut"}])
     d.set_blend_mode(cl, "screen")
     d.set_mask(cl, shape="ellipse", **MASK)
     second = d.place_clip(d.clips("v0")[0]["asset"], "v0", 48, 0, 60)
@@ -307,14 +317,17 @@ def body(t, canary):
     full = t.path("projects", "full.aive")
     f1, f2 = t.path("out", "full-1.png"), t.path("out", "full-2.png")
     g1, g2 = t.path("out", "full-graded-1.png"), t.path("out", "full-graded-2.png")
+    e1, e2, e_lin = (t.path("out", f"full-eased-{n}.png") for n in ("1", "2", "linear"))
     d.render_frame(0.5, f1)
     d.render_frame(GRADED_AT, g1)
+    d.render_frame(EASE_AT, e1)
     before = shape(d.get_state()), looks(d.get_state())
     d.save_project(full)
     d.load_project(legit)
     d.load_project(full)
     after = shape(d.get_state()), looks(d.get_state())
-    t.check("a project using colour, effects, a LUT, text, speed, a crop, a transform with opacity, keyframes, a blend "
+    t.check("a project using colour, effects, a LUT, text, speed, a crop, a transform with opacity, keyframes (linear and "
+            "eased), a blend "
             "mode, a mask, a speed ramp, a transition and an adjustment layer saves and loads unchanged (get_state: "
             "the clips, their effects, blend modes, masks, ramps and transitions, the layer)",
             after == before and any(c[2] is True for tr in before[1] for c in tr)
@@ -333,6 +346,25 @@ def body(t, canary):
     t.measure(f"…and the clip's colour adjustments render the same after the load where no layer covers them (frame "
               f"{round(GRADED_AT * 30 - 0.5)}: the 32 block means of 16 x 16 px within {GRADED_TOL} in each channel)",
               graded, lambda v: v <= GRADED_TOL, f"<= {GRADED_TOL}")
+    # The eased motion: the frame halfway through it after the load, then (to show the ease is what the frame holds)
+    # the same keyframes made linear on the loaded clip.
+    d.render_frame(EASE_AT, e2)
+    what = None
+    try:
+        d.set_keyframes(first_clip(), "y", [{"frame": 0, "value": EASED[0]}, {"frame": 40, "value": EASED[1]}])
+        d.render_frame(EASE_AT, e_lin)
+    except drv.JudgeError as e:
+        what = f"the linear keyframes were not rendered: {str(e)[:200]}"
+
+    def eased():
+        if what:
+            raise observe.Unmeasurable(what)
+        return round(observe.ssim(e1, e2), 4), round(observe.ssim(e1, e_lin), 4)
+    t.measure(f"…and its eased motion (y keyframes, easeOut) plays the same after the load: the frame halfway through "
+              f"it (frame {round(EASE_AT * 30 - 0.5)}) as before the save (SSIM >= 0.99), where the same keyframes "
+              f"made linear render another frame (SSIM under {EASE_APART})", eased,
+              lambda v: v[0] >= 0.99 and v[1] < EASE_APART,
+              f"SSIM after the load >= 0.99; linear < {EASE_APART}")
 
     # ---- 10. the same project with filter text added to every rendering value
     pwn10 = t.path("pwn", "values.txt")

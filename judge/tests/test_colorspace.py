@@ -5,39 +5,49 @@ editor's colour bookkeeping are internals; what a user sees of them is judged he
 
 The sources are make.sh's cs-* fixtures: an 8 x 4 grid of 32 flat patches (full and 75 % bars, skin, sky, darks,
 greys) coded from exact RGB with a known matrix and range, and tagged with exactly the tags named (or none), so the
-true colour of every patch is known; each video's frames also show their own index (0 to 17) in a band of eight
-stripes over the grid's top left corner, above the patches' middles (band(), index_of()). The judge reads an export
-as BT.709 limited range (read_as: an explicit reading, not its own FFmpeg's guess) and checks its tags apart
-(ffprobe); a patch is the mean of the 6 x 6 block at its middle (the original's reading), and a source read the
-wrong way is off by 30 to 40 levels on the saturated patches, so the original's limits (4 levels on an export, 6 on
-a rendered frame, 3 on a still, 8 on a JPEG thumbnail) tell them apart.
+true colour of every patch is known; each also shows, in a band of sixteen stripes over the grid's top left corner
+(above the patches' middles), its own number (NUMBER: no two sources share one) and each frame's index (0 to 17; 0 in
+a still) (band(), marks()). The judge reads an export as BT.709 limited range (read_as: an explicit reading, not its
+own FFmpeg's guess) and checks its tags apart (ffprobe); a patch is the mean of the 6 x 6 block at its middle (the
+original's reading), and a source read the wrong way is off by 30 to 40 levels on the saturated patches, so the
+original's limits (4 levels on an export, 6 on a rendered frame, 3 on a still, 8 on a JPEG thumbnail) tell them apart.
+
+Every file the editor is asked to make (an export, a rendered frame, a reversed or slowed copy, a still, a thumbnail)
+must show what only that request on that clip's own source at that moment makes (README.md, threat model): its
+source's number and the frames asked for, in the band, at the canvas's size; the cases that would look the same by
+design (two plain lossless clips, the two renders, the two graphics renderers, the OTIO clip and section 1's export
+of its media) each play another span or order. So no earlier export, render, copy or still, no file of the judge's and
+no copy of one (with bytes added or not) passes for it.
 
 - Exports (sections 1 and 3): untagged HD (BT.709), BT.709-tagged HD, BT.601-tagged HD, untagged HD VP9 (BT.601),
   BT.601-tagged SD on its own canvas and pillarboxed on an HD one, full range BT.709, an RGB still (PNG), a JPEG
   still (BT.601 full range); and the reading rules' other cases: untagged SD (BT.601), BT.709-tagged SD (the tag wins
   over the size), HD with only its matrix tagged, full range with no matrix (BT.601 full, as a JPEG), and an untagged
-  SD clip shown turned a quarter (its 480 coded lines make it SD, whatever way it is shown).
+  SD clip shown turned a quarter (its 480 coded lines make it SD, whatever way it is shown; the only canvas of its
+  size, 480x848, and its band is not read on the turned picture).
 - Lossless (3b): a plain clip at the canvas's size exports its own 4:2:0 samples (also with effects that change
-  nothing, and with a chroma key that is switched off: first seen to key, then bypassed); a crop with an odd offset or
-  size cuts the picture where it says; a clip zoomed 1.5 times (a fixed scale) is enlarged with smooth colour
-  (against the source enlarged in RGB by the judge).
+  nothing, and with a chroma key that is switched off: first seen to key, then bypassed), each played from a frame of
+  its own (LL_FROM); a crop with an odd offset or size cuts the picture where it says; a clip zoomed 1.5 times (a
+  fixed scale) is enlarged with smooth colour (against the source enlarged in RGB by the judge).
 - Copies (3c): a reversed and a slowed (blended frames) copy of a BT.601 source, of untagged VP9 and of an FFV1 clip
   with alpha export with the source's colours. The copy must be a new file of the editor's, by the judge's own look
   (new_file: every file listed with its device, inode and bytes before the action; the copy at its real path, not
   the judge's own, not the same bytes as any file listed before, gone since or not, or as the source, and not the
   same file as one of the judge's own files, moved since or not, or as a file still at its path), and its frames
-  and the export's must be what the operation makes, by the frame index band: the source's 18 frames backwards (17
-  first), or at half speed with blended frames between them (36 frames).
-- Motion graphics (3d): a graphic that draws flat colours exports with them (built-in renderer; the graphics add-on
-  when the judge has one).
+  and the export's must be what the operation makes on this source, by the band: this source's number in every
+  frame, and its 18 frames backwards (17 first), or at half speed with blended frames between them (36 frames).
+- Motion graphics (3d): a graphic that draws flat colours exports with them where it draws them (built-in renderer;
+  the graphics add-on when the judge has one, with the colours in another order).
 - An OTIO file from another editor, which says nothing about its media's colours, opens and exports with the true
-  colours: a check of its own. The original's section 4 (a project saved before the editor recorded each file's colour
-  description) stays v0.2.0-only: an OTIO import reads the media again, so it never meets such a project, and only the
-  editor's own project format can hold one.
-- render_frame, before and after a preview render (5); a freeze frame's still (its own file, a new one as for the
-  copies, and where it plays: each shows the frame held, 6, by the band), a thumbnail at 0.2 s (a new file too,
-  showing frame 6 or the frame next to it) and the colour found for a key (6: within 1 level of the screen's border as
-  the judge reads it); a JPEG is a still (2).
+  colours, and with the span of its media it names (frames 6 to 17): a check of its own. The original's section 4 (a
+  project saved before the editor recorded each file's colour description) stays v0.2.0-only: an OTIO import reads
+  the media again, so it never meets such a project, and only the editor's own project format can hold one.
+- render_frame at frame 9, and after a preview render at frame 15 (5); a freeze frame's still (its own file, a new
+  one as for the copies, and where it plays: each shows the frame held, 6, of cs-hd, by the band), made while a
+  picture on the track above covers the timeline (the still is the clip's own frame, so a render of the composite
+  does not pass for it); a thumbnail at 0.4 s, frame 12, which no earlier file shows (a new file too, showing that
+  frame or the one next to it, of cs-hd, also made under the cover); and the colour found for a key (6: within 1
+  level of the screen's border as the judge reads it); a JPEG is a still (2).
 
 Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
 """
@@ -185,37 +195,59 @@ def dev_ino(st):
     return (st.get("dev"), st.get("ino")) if st else None
 
 
-# ---------------------------------------------------------------- the frame index band (make.sh: the cs-* videos)
-# The band over the grid's top left corner (x < W/4, y < H/16) is read scaled to BAND (area average), and each of its
-# eight stripes as the mean grey of its middle half: over BRIGHT a set bit, under DARK a clear one, between them a
-# stripe that is neither (a blend of two frames whose bit differs reads about 125: grey 30 and 220 in equal parts).
-BAND, BRIGHT, DARK = (256, 32), 160, 90
+# ---------------------------------------------------------------- the band: the file's number and the frame's index
+# (make.sh: the cs-* pictures). The band over the picture's top left corner (x < W/2, y < H/16) is read scaled to BAND
+# (area average), and each of its sixteen stripes as the mean grey of its middle half: over BRIGHT a set bit, under
+# DARK a clear one, between them a stripe that is neither (a blend of two frames whose bit differs reads about 125:
+# grey 30 and 220 in equal parts). Stripes 0 to 7 are the frame's index, 8 to 15 the source's own number (NUMBER).
+BAND, BRIGHT, DARK = (512, 32), 160, 90
+NUMBER = {"cs-hd.mp4": 1, "cs-709.mp4": 2, "cs-601.mp4": 3, "cs-sd601.mp4": 4, "cs-sd.mp4": 5, "cs-sd709.mp4": 6,
+          "cs-full709.mp4": 7, "cs-fullnm.mp4": 8, "cs-partial.mp4": 9, "cs-vp9.webm": 10, "cs-cut601.mkv": 11,
+          "cs-rotsd.mp4": 12, "cs-grid.png": 13, "cs-grid.jpg": 14, "cs-testsrc.mp4": 15}
 
 
-def band(path, formats=observe.MEDIA):
-    """The band of every decoded frame of the video (or picture) at `path`: [[the grey of stripes 0 to 7]]."""
+def band(path, formats=observe.MEDIA, rect=None):
+    """The band of every decoded frame of the video (or picture) at `path`, over the picture at `rect` (x, y, w, h;
+    the whole frame by default): [[the grey of stripes 0 to 15]]."""
     w, h = BAND
-    raw = observe.pixels(path, 0, f"crop=w=iw/4:h=ih/16:x=0:y=0,scale={w}:{h}:flags=area", "gray", 1000, formats)
-    sw, out = w // 8, []
+    x, y, rw, rh = rect or (0, 0, None, None)
+    crop = (f"crop=w=iw/2:h=ih/16:x=0:y=0" if rect is None else f"crop=w={rw // 2}:h={rh // 16}:x={x}:y={y}")
+    raw = observe.pixels(path, 0, f"{crop},scale={w}:{h}:flags=area", "gray", 1000, formats)
+    sw, out = w // 16, []
     for k in range(len(raw) // (w * h)):
         f = raw[k * w * h:(k + 1) * w * h]
         ys, row = range(h // 4, 3 * h // 4), []
-        for b in range(8):
+        for b in range(16):
             xs = range(b * sw + sw // 4, b * sw + 3 * sw // 4)
             row.append(round(sum(f[y * w + x] for y in ys for x in xs) / (len(xs) * len(ys))))
         out.append(row)
     return out
 
 
-def index_of(stripes):
-    """The frame index the band shows, or None when a stripe is neither set nor clear (a blended frame)."""
+def bits(stripes):
+    """The number that eight stripes show, or None when a stripe is neither set nor clear (a blended frame)."""
     if any(DARK <= v <= BRIGHT for v in stripes):
         return None
     return sum(1 << b for b, v in enumerate(stripes) if v > BRIGHT)
 
 
-def indexes(path, formats=observe.MEDIA):
-    return [index_of(s) for s in band(path, formats)]
+def marks(path, formats=observe.MEDIA, rect=None):
+    """[(the frame's index or None, the source's number or None)] of every frame at `path`."""
+    return [(bits(s[:8]), bits(s[8:])) for s in band(path, formats, rect)]
+
+
+def fmts(media):
+    """The demuxers a source may be read with: a JPEG or PNG still as a picture."""
+    return observe.STILL if media.endswith(STILLS) else observe.MEDIA
+
+
+def indexes(path, formats=observe.MEDIA, rect=None):
+    return [i for i, _ in marks(path, formats, rect)]
+
+
+def sources(path, formats=observe.MEDIA, rect=None):
+    """The source numbers its frames show (a set: one number when every frame comes from one source)."""
+    return {n for _, n in marks(path, formats, rect)}
 
 
 def picture_error(path):
@@ -268,24 +300,71 @@ def place(t, d, media, start=0):
 
 
 # ---------------------------------------------------------------- sections 1 and 3: exports
+def own_frames(path, media, frames, canvas, rect=None, first=0):
+    """Whether the export at `path` is this source's own picture, whole and in turn: the canvas's size, every frame
+    showing the source's number (NUMBER) in its band, and its frame indexes `first`, first + 1, ... for `frames`
+    frames (a still: index 0 in each of `frames` frames; one more frame at the end at most). So an export of another
+    source, of another canvas or of another span of this one does not pass for it. -> (ok, what the judge read)"""
+    w, h, _ = observe.size(path)
+    m = marks(path, observe.MEDIA, rect)
+    seq, nums = [i for i, _ in m], {n for _, n in m}
+    want = [0] * frames if media.endswith(STILLS) else list(range(first, first + frames))
+    ok = ((w, h) == canvas and nums == {NUMBER[media]} and seq[:frames] == want
+          and len(seq) in (frames, frames + 1) and (len(seq) == frames or seq[-1] == want[-1]))
+    return ok, f"{w}x{h}, source number {sorted(nums, key=str)}, frames {shown(seq)}"
+
+
+EXPORT_FROM = 2  # the first frame of each video source that section 1's exports play
+
+
 def exports(t, d, o):
     for label, media, w, h, rect in SOURCES:
         fresh(d, w, h)
-        place(t, d, media)
+        # A video plays from its frame EXPORT_FROM (a still for SECS frames): the source file itself, or a copy of
+        # it, is not this export (a BT.709-tagged source already looks as its export must).
+        if media.endswith(STILLS):
+            place(t, d, media)
+        else:
+            d.place_clip(d.import_media(t.media(media)), "v0", 0, EXPORT_FROM)
         name = o.export(media + f"-{w}x{h}")
         t.measure(f"{label}: the export is tagged BT.709 limited range, all four tags",
                   lambda name=name: observe.colour_tags(o.path(name)), lambda v: v == TAGGED_709, f"{TAGGED_709}")
         if rect == "turned":
-            fn = (lambda name=name: turned_error(o.path(name), 0.3))
+            # The band is not read on the turned picture: this canvas (480x848) is the only one of its size here.
+            def fn(name=name, w=w, h=h):
+                size = observe.size(o.path(name))[:2]
+                frames = observe.decode(o.path(name))["video_frames"]
+                return turned_error(o.path(name), 0.3) + ((size == (w, h) and frames == SECS - EXPORT_FROM,
+                                                           f"{size[0]}x{size[1]}, {frames} frames"),)
+            what = f"at the canvas's size ({w}x{h}), {SECS - EXPORT_FROM} frames (from its frame {EXPORT_FROM})"
         else:
-            fn = (lambda name=name, rect=rect: o.error(name, 0.3, rect))
-        t.measure(f"{label}: the export's patches are within 4 levels of the true colours, read as tagged", fn,
-                  lambda v: v[0] <= 4, "<= 4; the detail names the worst patch")
+            def fn(name=name, rect=rect, media=media, w=w, h=h):
+                n, first = (SECS, 0) if media.endswith(STILLS) else (SECS - EXPORT_FROM, EXPORT_FROM)
+                return o.error(name, 0.3, rect) + (own_frames(o.path(name), media, n, (w, h), rect, first),)
+            what = (f"this source's own frames (its number, {NUMBER[media]}, and in the band its frames from "
+                    f"{EXPORT_FROM} in turn, a still's for {SECS} frames; at the canvas's size, {w}x{h})")
+        t.measure(f"{label}: the export shows {what}, and its patches are within 4 levels of the true colours, read "
+                  f"as tagged", fn, lambda v: v[0] <= 4 and v[2][0], "<= 4, its own frames; the detail names the "
+                  "worst patch, then what the band shows")
 
 
 # ---------------------------------------------------------------- 3b: lossless planes, crops
-def planes(path):
-    return observe.pixels(path, 0, "null", "yuv420p")
+def planes(path, at=0):
+    """The Y, U and V planes of the frame at `at` s (the first one at or after it) as yuv420p bytes."""
+    return observe.pixels(path, at, "null", "yuv420p")
+
+
+def frame_at(k):
+    """A time that seeks to frame k of a 30 fps file (a quarter frame before it, between frames after rounding)."""
+    return max(0.0, (k - 0.25) / FPS)
+
+
+# Each lossless export plays its clip from a frame of its own (LL_FROM), so no two of them must show the same frames
+# (two of the plain cases change nothing by design): an export of another case is not one of this one. cs-testsrc's
+# band shows its number (15) and the frame (make.sh); its 12 frames also differ from each other (testsrc moves).
+LL_FROM = {"cs-testsrc.mp4-False": 1, "cs-gridll.mp4-False": 4, "cs-testsrc.mp4-invert": 3,
+           "cs-testsrc.mp4-keyoff": 5, "crop-3": 0, "crop-2": 7, "crop-1001": 0, "zoom": 0}
+LL_FRAMES = 12  # cs-testsrc's and cs-gridll's frames (0.4 s)
 
 
 def lossless(t, d, o):
@@ -298,7 +377,8 @@ def lossless(t, d, o):
              "invert"),
             ("testsrc with a switched-off chroma key", "cs-testsrc.mp4", {"p99": 2, "mean": 0.2}, "keyoff")):
         fresh(d, W, H)
-        clip = place(t, d, media)
+        start = LL_FROM[f"{media}-{fx}"]
+        clip = d.place_clip(d.import_media(t.media(media)), "v0", 0, start)
         on = None
         if fx == "invert":
             d.apply_effect(clip, "invert")
@@ -312,46 +392,66 @@ def lossless(t, d, o):
         name = o.export(f"plain-{media}-{fx}", lossless=True)
         effects = (edits.clip(d.get_state(), clip) or {}).get("effects")
 
-        def same(name=name, media=media, on=on, effects=effects):
-            a, b = planes(t.media(media)), planes(o.path(name))
+        def same(name=name, media=media, on=on, effects=effects, start=start):
+            a, b = planes(t.media(media), frame_at(start)), planes(o.path(name))
             if len(a) != len(b):
-                raise observe.Unmeasurable(f"{len(a)} samples in the source's first frame, {len(b)} in the export's")
+                raise observe.Unmeasurable(f"{len(a)} samples in the source's frame {start}, {len(b)} in the export's")
             got = (observe.plane_diff(a, b, 0, y_size), observe.plane_diff(a, b, y_size, len(a)))
+            if media == "cs-testsrc.mp4":
+                m = marks(o.path(name))
+                seq = [i for i, _ in m]
+                own = (seq[:LL_FRAMES - start] == list(range(start, LL_FRAMES)) and len(seq) <= LL_FRAMES - start + 1
+                       and {n for _, n in m} == {NUMBER[media]})
+            else:  # the grid has no band (and every frame alike): its own length, from its frame `start`
+                seq = None
+                own = (observe.size(o.path(name))[:2] == (W, H)
+                       and observe.decode(o.path(name))["video_frames"] == LL_FRAMES - start)
+            got += ({"its own frames (the band: the source's number and its frames from " + str(start) + ")": own,
+                     "frames": shown(seq) if seq is not None else "no band"},)
             if on is None:
                 return got
             k = planes(o.path(on))
             keyed = observe.plane_diff(a, k, 0, y_size) if len(k) == len(a) else None
+            km = marks(o.path(on))  # the key leaves the grey band alone: the keyed export's own frames too
+            k_own = ([i for i, _ in km][:LL_FRAMES - start] == list(range(start, LL_FRAMES))
+                     and {n for _, n in km} == {NUMBER[media]})
             bypassed = (isinstance(effects, list) and len(effects) == 1 and effects[0].get("effect") == "chromakey"
                         and effects[0].get("enabled") is False)
-            return got + ({"the key switched on, Y against the source": keyed, "get_state's effects": effects,
-                           "ok": bool(keyed and keyed["mean"] >= KEY_ON_MEAN and bypassed)},)
+            return got + ({"the key switched on, Y against the source": keyed, "its own frames": k_own,
+                           "get_state's effects": effects,
+                           "ok": bool(keyed and keyed["mean"] >= KEY_ON_MEAN and bypassed and k_own)},)
 
         def within(v, limit=limit):
+            own = next(iter(v[2].values()))
             return all(s["p99"] <= limit["p99"] and s["mean"] <= limit["mean"] and s.get("max", 0) <= limit.get(
-                "max", 255) for s in v[:2]) and (len(v) == 2 or v[2]["ok"])
-        t.measure(f"{label}: a plain clip at the canvas's size exports its own samples (lossless; Y, then U and V, "
-                  f"against the source's)" + (
+                "max", 255) for s in v[:2]) and own and (len(v) == 3 or v[3]["ok"])
+        t.measure(f"{label}: a plain clip at the canvas's size exports its own samples (lossless, played from frame "
+                  f"{start}; Y, then U and V, against the source's there; and the band shows the source's number and "
+                  f"its frames from {start} in turn)" + (
                       f" (the key, on, first changed the export: Y mean difference {KEY_ON_MEAN} or more; then "
-                      f"get_state shows it kept and switched off)" if fx == "keyoff" else ""), same, within,
+                      f"get_state shows it kept and switched off; the keyed export shows the source's own frames from {start} "
+                      f"too)" if fx == "keyoff" else ""), same, within,
                   f"each plane {limit}")
     # Crops with an odd offset or size, on a 640x360 canvas: the export against the source read whole, cut exactly
-    # where the crop says (in RGB) and fitted to the canvas. The first needs no scaling, so its reference is the
-    # source's own pixels; the others are scaled a little to fit, and the judge does not know the editor's resampling
-    # filter, so each is held to the closest of the references made with five common ones.
+    # where the crop says (in RGB) and fitted to the canvas, each played from a frame of its own (LL_FROM). The first
+    # needs no scaling, so its reference is the source's own pixels; the others are scaled a little to fit, and the
+    # judge does not know the editor's resampling filter, so each is held to the closest of the references made with
+    # five common ones.
     cw, ch = 640, 360
     for (x, y, w, h), at in (((3, 5, 640, 360), None), ((2, 4, 639, 359), None), ((1001, 3, 500, 281), (780, 3))):
         fresh(d, cw, ch)
-        clip = place(t, d, "cs-testsrc.mp4")
+        start = LL_FROM[f"crop-{x}"]
+        clip = d.place_clip(d.import_media(t.media("cs-testsrc.mp4")), "v0", 0, start)
         d.crop_clip(clip, x, y, w, h)
         name = o.export(f"crop-{x}-{w}", lossless=True)
         cx, cy = at or (x, y)
         scalers = ("lanczos",) if (w, h) == (cw, ch) else CROP_SCALERS
 
-        def cut(name=name, cx=cx, cy=cy, w=w, h=h, scalers=scalers):
+        def cut(name=name, cx=cx, cy=cy, w=w, h=h, scalers=scalers, start=start):
             got = planes(o.path(name))
             best = None
             for fl in scalers:
-                ref = observe.pixels(t.media("cs-testsrc.mp4"), 0, (
+                ref = observe.pixels(t.media("cs-testsrc.mp4"), frame_at(start), (
                     f"{AS_709},crop={w}:{h}:{cx}:{cy}:exact=1,scale={cw}:{ch}:force_original_aspect_ratio=decrease:"
                     f"flags={fl}+accurate_rnd+full_chroma_int,pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2:color=black,"
                     f"scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int"), "yuv420p")
@@ -363,10 +463,12 @@ def lossless(t, d, o):
                     best = v
             return best
         t.measure(f"a crop of {w}x{h} at {x},{y}" + (f" (it runs off the right edge: moved in to {cx})" if at else "")
-                  + ": the export shows the source's own pixels there (lossless; against the source cut exactly in "
-                  "RGB" + (")" if len(scalers) == 1 else " and fitted, the closest of five resampling filters)"), cut,
-                  lambda v: v[0]["p99"] <= 1 and v[1]["p99"] <= 1 and v[1]["mean"] <= CROP_UV_MEAN,
-                  f"Y and U/V p99 <= 1, U/V mean <= {CROP_UV_MEAN}")
+                  + f", played from frame {start}: the export shows the source's own pixels there (lossless; against "
+                  "the source's frame cut exactly in RGB" + (")" if len(scalers) == 1 else
+                                                              " and fitted, the closest of five resampling filters)"),
+                  cut, lambda v: v[0]["p99"] <= 1 and v[0]["mean"] <= CROP_Y_MEAN and v[1]["p99"] <= 1
+                  and v[1]["mean"] <= CROP_UV_MEAN, f"Y and U/V p99 <= 1, Y mean <= {CROP_Y_MEAN}, U/V mean <= "
+                  f"{CROP_UV_MEAN}")
 
 
     # A fixed zoom (set_transform scale 1.5, about the middle): the export against the source read in RGB, enlarged
@@ -408,6 +510,9 @@ ZOOM_Y_P99, ZOOM_UV_P99 = 2, 4
 # two crops (mean 0.73 and 0.39), and U/V mean 0.09 to 0.11 on the third; the right cut reads p99 0 and mean 0.004 to
 # 0.014 on v0.2.0's exports (judge/PORTING.md, colorspace 3b).
 CROP_UV_MEAN = 0.05
+# The crops' Y mean against their reference: v0.2.0 and this tree read 0.0 with FFmpeg 4.4 and 9.0.2-17 (testsrc's
+# frames differ from each other by 0.4 on average, and the band's stripes by more).
+CROP_Y_MEAN = 0.2
 # The key that is switched on and then off (3b): a chroma key on pure green, which keys out testsrc's green bars (the
 # canvas shows black there), so the export with it on differs from the source by KEY_ON_MEAN or more on average in Y
 # (v0.2.0: 21.6 with FFmpeg 4.4, 22.3 with 9.0.2-17).
@@ -448,7 +553,7 @@ def slowed_ok(seq):
     return sum(1 for i in seq if i is None) >= SLOW_BLENDS and max(runs) <= 2
 
 
-BANDED = ("cs-hd.mp4", "cs-601.mp4", "cs-vp9.webm", "cs-cut601.mkv")
+BANDED = tuple(m for m in NUMBER if m != "cs-rotsd.mp4")  # the band of cs-rotsd is turned with its picture
 # The least number of blended frames in a slowed copy of the 18 frames: v0.2.0's copies and exports have 13 or 14 (it
 # shows some middle frames twice instead), with FFmpeg 4.4 and 9.0.2-17; a copy that repeats each frame has none.
 SLOW_BLENDS = 8
@@ -457,10 +562,14 @@ SLOW_BLENDS = 8
 def copies(t, d, o):
     # Control: the judge reads each source's own frames as 0 to 17 in turn (so a copy's frames are judged against a
     # known reference).
-    t.measure("control: the frame index band of each source the copies, the still and the thumbnail are made from "
-              "reads 0 to 17 in turn (the judge's reading of make.sh's cs-hd, cs-601, cs-vp9 and cs-cut601)",
-              lambda: {m: shown(indexes(t.media(m))) for m in BANDED},
-              lambda v: all(x == shown(range(SECS)) for x in v.values()), "0,1,...,17 for each")
+    t.measure("control: the band of each banded source reads its own number and its frames 0 to 17 in turn (the "
+              "judge's reading of make.sh's cs-* videos; a still, index 0), and no two sources show the same number",
+              lambda: {m: (shown(indexes(t.media(m), fmts(m))), sorted(sources(t.media(m), fmts(m)), key=str))
+                       for m in BANDED},
+              lambda v: all(x == (shown([0] if m.endswith(STILLS) else range(LL_FRAMES if m == "cs-testsrc.mp4" else
+                                                                             SECS)), [NUMBER[m]])
+                            for m, x in v.items()) and len(set(NUMBER.values())) == len(NUMBER),
+              "for each: 0,1,...,17 (cs-testsrc 0 to 11, a still 0) and its own number (NUMBER)")
     for label, media in (("untagged HD VP9", "cs-vp9.webm"), ("BT.601-tagged HD", "cs-601.mp4"),
                          ("a BT.601-tagged HD clip with alpha (FFV1)", "cs-cut601.mkv")):
         for bake in ("reverse", "slow"):
@@ -494,22 +603,31 @@ def copies(t, d, o):
             at = 0.3 if bake == "reverse" else 0.6
             how = "reversed" if bake == "reverse" else "slowed to 0.5x with blended frames"
             t.measure(f"{label}, {how}: the clip plays the editor's new copy (a new file in the editor's folders, the "
-                      f"clip {frames} frames long), and the export shows the true colours (within 4)",
-                      lambda name=name, at=at, made=made: (made or True, o.error(name, at)),
-                      lambda v: v[0] is True and v[1][0] <= 4, "a new copy; patches within 4")
+                      f"clip {frames} frames long), and the export shows this source's frames (its number, "
+                      f"{NUMBER[media]}, in every frame's band, {frames} frames) in the true colours (within 4)",
+                      lambda name=name, at=at, made=made, media=media, frames=frames: (
+                          made or True, o.error(name, at),
+                          sorted(sources(o.path(name)), key=str) == [NUMBER[media]]
+                          and len(indexes(o.path(name))) in (frames, frames + 1)),
+                      lambda v: v[0] is True and v[1][0] <= 4 and v[2], "a new copy; patches within 4; its frames")
             ok = reversed_ok if bake == "reverse" else slowed_ok
 
-            def run_of(name=name, made=made, path=path):
+            def run_of(name=name, made=made, path=path, media=media):
                 if made:
                     raise observe.Unmeasurable(f"no copy of the editor's to read: {made}")
-                a, b = indexes(path), indexes(o.path(name))
-                return {"copy": shown(a), "export": shown(b), "ok": ok(a) and ok(b)}
-            t.measure(f"{label}, {how}: the copy's frames and the export's are the source's "
+                a, b = marks(path), marks(o.path(name))
+                ia, ib = [i for i, _ in a], [i for i, _ in b]
+                na, nb = {n for _, n in a}, {n for _, n in b}
+                return {"copy": shown(ia), "export": shown(ib), "source numbers": [sorted(na, key=str),
+                                                                                   sorted(nb, key=str)],
+                        "ok": ok(ia) and ok(ib) and na == nb == {NUMBER[media]}}
+            t.measure(f"{label}, {how}: the copy's frames and the export's are this source's own (its number, "
+                      f"{NUMBER[media]}, in every frame's band) "
                       + ("backwards: its last frame (17) first, down to frame 0" if bake == "reverse" else
                          f"at half speed with blends between them: frames 0 to 17 in turn, each shown twice at most, "
                          f"and at least {SLOW_BLENDS} frames that blend two of them")
-                      + " (the frame index band, read by the judge; ~ is a blend)", run_of, lambda v: v["ok"],
-                      "the frame indexes of the copy, then of the export")
+                      + " (the band, read by the judge; ~ is a blend)", run_of, lambda v: v["ok"],
+                      "the frame indexes of the copy, then of the export, and the source numbers they show")
 
 
 # ---------------------------------------------------------------- 2, 5, 6: stills, rendered frames, thumbnails, keys
@@ -522,24 +640,38 @@ def stills_and_frames(t, d, o):
     lens = [(edits.clip(st, c) or {}).get("length_frames") for c in (jpg, png)]
     t.check("a JPEG file is a still: placed whole, it lasts as long as a PNG placed whole (the editor's still length, "
             "over 1 s)", lens[0] == lens[1] and isinstance(lens[0], int) and lens[0] > FPS, f"JPEG, PNG: {lens}")
-    # 5. render_frame, then after a preview render (render_frame may be served from it)
+    # 5. render_frame, then after a preview render (render_frame may be served from it), each at a moment of its own
+    # (frames 9 and 15 of cs-hd, by the band), so neither frame can stand in for the other
     fresh(d, 1280, 720)
     clip = place(t, d, "cs-hd.mp4")
     asset = (edits.clip(d.get_state(), clip) or {}).get("asset")
-    o.render("frame", 0.3)
-    t.measure("render_frame of untagged HD: its patches within 6 levels of the true colours",
-              lambda: o.error("frame", 0, chain="null"), lambda v: v[0] <= 6, "<= 6")
+    o.render("frame", FRAME_AT[0] / FPS)
+
+    def rendered_at(name, k):
+        def fn():
+            return o.error(name, 0, chain="null") + (marks(o.path(name))[:1],)
+        return fn
+    shows = (lambda k: (lambda v: v[0] <= 6 and v[2] == [(k, NUMBER["cs-hd.mp4"])]))
+    t.measure(f"render_frame of untagged HD at frame {FRAME_AT[0]}: that frame of the source (the band: its frame "
+              f"index and the source's number), its patches within 6 levels of the true colours",
+              rendered_at("frame", FRAME_AT[0]), shows(FRAME_AT[0]), f"<= 6; the band ({FRAME_AT[0]}, 1)")
     try:
         d.render_preview()
     except drv.JudgeError as e:
         o.out["frame-preview"] = (None, f"render_preview failed: {e}")
     else:
-        o.render("frame-preview", 0.3)
-    t.measure("...and after a preview render: within 6", lambda: o.error("frame-preview", 0, chain="null"),
-              lambda v: v[0] <= 6, "<= 6")
+        o.render("frame-preview", FRAME_AT[1] / FPS)
+    t.measure(f"...and after a preview render, at frame {FRAME_AT[1]}: that frame, within 6",
+              rendered_at("frame-preview", FRAME_AT[1]), shows(FRAME_AT[1]), f"<= 6; the band ({FRAME_AT[1]}, 1)")
     # 6. a freeze frame's still: its own file (a new picture in the editor's folders, read as its format is read, as
-    # the original read it) and where it plays (render_frame at its middle); each shows the frame held (frame 6, by
-    # the frame index band), not another of the clip's
+    # the original read it) and where it plays (render_frame at its middle); each shows the frame held (frame 6 of
+    # cs-hd, by the band), not another of the clip's or another source's. While the freeze is made, a picture on the
+    # track above (cs-green, the whole canvas) covers the whole timeline: the still is the clip's own frame (PROTOCOL:
+    # "with the clip's look"), so a frame of the composite (render_frame) does not pass for it; the cover is taken
+    # away before the still is rendered where it plays.
+    cover_track = d.add_track("video")
+    green_asset = d.import_media(t.media("cs-green.mp4"))
+    cover_clip(d, green_asset, cover_track)
     before = d.get_state()
     files = snapshot(t)
     d.freeze_frame(clip, HELD_FRAME, 15)
@@ -550,38 +682,56 @@ def stills_and_frames(t, d, o):
                       None)
     still_why = (f"no still in the State: v0 {edits.clips(after, 'v0')}" if still is None else
                  new_file(t, files, still_path, (t.media("cs-hd.mp4"),)))
+    uncover(d, cover_track)
     if still_why is None:
+        # rendered on a canvas of half the size (STILL_CANVAS), so the still's own file (the source's size) does
+        # not pass for the frame where it plays
+        d.set_project(width=STILL_CANVAS[0], height=STILL_CANVAS[1], fps=FPS)
         o.render("still", (still["start_frame"] + 7.5) / FPS)
+        d.set_project(width=1280, height=720, fps=FPS)
     else:
         o.out["still"] = (None, f"the still's file is not a new file of the editor's: {still_why}")
+    held = [(HELD_FRAME, NUMBER["cs-hd.mp4"])]
 
     def still_file():
         if still_why:
             raise observe.Unmeasurable(f"the still's file is not a new file of the editor's: {still_why}")
-        return picture_error(still_path) + (shown(indexes(still_path, observe.STILL)),)
-    t.measure(f"a freeze frame of untagged HD at frame {HELD_FRAME}: its still's own file (a new picture in the "
-              f"editor's folders, read as its format is read) shows that frame (the frame index band: {HELD_FRAME}) "
-              f"in the true colours (within 3)", still_file, lambda v: v[0] <= 3 and v[3] == str(HELD_FRAME),
-              f"<= 3; the band reads {HELD_FRAME}")
-    t.measure(f"...and where it plays (render_frame at its middle): frame {HELD_FRAME}, within 4",
-              lambda: o.error("still", 0, chain="null") + (shown(indexes(o.path("still"))),),
-              lambda v: v[0] <= 4 and v[2] == str(HELD_FRAME), f"<= 4; the band reads {HELD_FRAME}")
+        return picture_error(still_path) + (marks(still_path, observe.STILL),)
+    t.measure(f"a freeze frame of untagged HD at frame {HELD_FRAME}, made while a picture on the track above covers "
+              f"the timeline: its still's own file (a new picture in the editor's folders, read as its format is "
+              f"read) shows that frame of the clip alone (the band: frame {HELD_FRAME} of source 1) in the true "
+              f"colours (within 3)", still_file, lambda v: v[0] <= 3 and v[3] == held,
+              f"<= 3; the band {held}")
+    t.measure(f"...and where it plays (render_frame at its middle, the cover taken away, the canvas set to "
+              f"{STILL_CANVAS[0]}x{STILL_CANVAS[1]}): frame {HELD_FRAME} at that size, within 4",
+              lambda: o.error("still", 0, chain="null") + (marks(o.path("still")),
+                                                           observe.size(o.path("still"))[:2]),
+              lambda v: v[0] <= 4 and v[2] == held and v[3] == STILL_CANVAS, f"<= 4; the band {held}; "
+              f"{STILL_CANVAS[0]}x{STILL_CANVAS[1]}")
 
-    # 6. a thumbnail: read as its format is read (a JPEG as BT.601 full range); it shows the frame at its time
+    # 6. a thumbnail: read as its format is read (a JPEG as BT.601 full range); it shows the frame at its time, a
+    # moment that no earlier file or render shows (frame 12 of cs-hd: the still holds 6, the renders show 9, 15 and
+    # 6), made while the cover is on the track above again over the whole timeline, so a frame of the composite does
+    # not pass for it
     def thumb():
+        cover_clip(d, green_asset, cover_track)
         mine = snapshot(t)
         try:
             path = d.thumbnail(asset, THUMB_AT)
         except drv.JudgeError as e:
             raise observe.Unmeasurable(f"thumbnail failed: {e}")
+        finally:
+            uncover(d, cover_track)
         why = new_file(t, mine, path, (t.media("cs-hd.mp4"),))
         if why:
             raise observe.Unmeasurable(f"the thumbnail is not a new file of the editor's: {why}")
-        return picture_error(path) + (shown(indexes(path, observe.STILL)),)
-    t.measure(f"a thumbnail of untagged HD at {THUMB_AT} s (a new picture in the editor's folders), read as its format "
-              f"is read: the frame there (the frame index band: {THUMB_FRAMES[1]}, or the frame next to it), within 8 "
-              f"levels of the true colours", thumb, lambda v: v[0] <= 8 and v[3] in [str(f) for f in THUMB_FRAMES],
-              f"<= 8; the band reads one of {THUMB_FRAMES}")
+        return picture_error(path) + (marks(path, observe.STILL),)
+    t.measure(f"a thumbnail of untagged HD at {THUMB_AT} s, made while a picture on the track above covers the "
+              f"timeline (a new picture in the editor's folders), read as its format is read: the frame there of the "
+              f"asset alone (the band: frame {THUMB_FRAMES[1]} of source 1, or the frame next to it), within 8 levels "
+              f"of the true colours", thumb,
+              lambda v: v[0] <= 8 and v[3] in [[(f, NUMBER["cs-hd.mp4"])] for f in THUMB_FRAMES],
+              f"<= 8; the band reads one of {THUMB_FRAMES}, source 1")
     # 6. the colour found for a key on an untagged HD green screen: the screen's colour as the judge reads it (its
     # border, read as BT.709 limited range as the export reads an untagged HD file; 0x1EC83D, the 0x1EC83C it was made
     # from after its coding), within 1, and within the original's 3 of 0x1EC83C
@@ -608,14 +758,33 @@ def stills_and_frames(t, d, o):
               "<= 1 of the border, <= 3 of 0x1EC83C")
 
 
-# The freeze frame's held frame, and the thumbnail's time and the frames it may show: the frame at 0.2 s is frame 6
-# (v0.2.0's thumbnail shows it), and the frame before or after it is allowed (a still of "the asset at 0.2 s").
-HELD_FRAME, THUMB_AT, THUMB_FRAMES = 6, 0.2, (5, 6, 7)
+# The freeze frame's held frame, the moments of the two rendered frames, and the thumbnail's time and the frames it
+# may show: the frame at 0.4 s is frame 12 (v0.2.0's thumbnail shows it), and the frame before or after it is allowed
+# (a still of "the asset at 0.4 s"). No earlier file shows frames 11 to 13 of cs-hd as a picture: the still holds 6,
+# the renders show 9, 15 and the still (6).
+HELD_FRAME, FRAME_AT, THUMB_AT, THUMB_FRAMES = 6, (9, 15), 0.4, (11, 12, 13)
+STILL_CANVAS = (640, 360)  # the canvas the still is rendered on where it plays
+
+
+def cover_clip(d, asset, track):
+    """Places cs-green (0.4 s) end to end on `track` over the whole timeline (its first 60 frames, more than any
+    timeline of this part): a picture over everything below. -> the clips"""
+    return [d.place_clip(asset, track, k * 12, 0) for k in range(5)]
+
+
+def uncover(d, track):
+    """Removes every clip of `track` (as get_state lists them: an edit may have split or moved the cover)."""
+    for tr in d.get_state().get("tracks", []):
+        if tr.get("track") == track:
+            for c in tr.get("clips", []):
+                d.remove_clip(c["id"])
 
 
 # ---------------------------------------------------------------- 3d: motion graphics
 GRAPHIC_COLOURS = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255), (128, 128, 128), (224, 172, 105),
                    (100, 150, 220), (40, 20, 10)]
+# Each renderer draws the colours in an order of its own (ORDER), so the export of one does not pass for the other's.
+ORDER = {"builtin": [0, 1, 2, 3, 4, 5, 6, 7], "addon": [2, 3, 0, 4, 1, 7, 5, 6]}
 GRAPHIC = """import React from "react";
 import { AbsoluteFill } from "remotion";
 const COLOURS = %s;
@@ -626,7 +795,13 @@ export default function Patches() {
     </AbsoluteFill>
   );
 }
-""" % json.dumps(["#%02x%02x%02x" % c for c in GRAPHIC_COLOURS])
+"""
+
+
+def graphic(renderer):
+    """(the graphic's code, its colours in the order it draws them) for `renderer`."""
+    colours = [GRAPHIC_COLOURS[k] for k in ORDER[renderer]]
+    return GRAPHIC % json.dumps(["#%02x%02x%02x" % c for c in colours]), colours
 
 
 def rendered(fn):
@@ -641,27 +816,28 @@ def rendered(fn):
     return None, "; ".join(said)
 
 
-# How many of GRAPHIC_COLOURS each renderer is held to: the built-in renderer all 8; the graphics add-on the first 5
-# (red, green, blue, white, grey: the colours a wrong matrix moves by 20 or more where the right one keeps them),
-# since its own render already shifts the mid tones (judge/PORTING.md, colorspace 3d).
-HELD = {"builtin": 8, "addon": 5}
+# Which of GRAPHIC_COLOURS each renderer is held to: the built-in renderer all 8; the graphics add-on red, green,
+# blue, white and grey (the colours a wrong matrix moves by 20 or more where the right one keeps them), since its own
+# render already shifts the mid tones (judge/PORTING.md, colorspace 3d).
+HELD = {"builtin": range(8), "addon": range(5)}
 
 
 def graphics(t, d, o):
     for renderer in ("builtin", "addon"):
         if renderer == "builtin":
             name = ("a motion graphic that draws 8 flat colours (the built-in renderer), as its own clip: the export "
-                    "shows its colours (within 4)")
+                    "shows its colours where it draws them (within 4)")
         else:
-            name = ("a motion graphic that draws flat colours (the graphics add-on), as its own clip: the export shows "
-                    "its red, green, blue, white and grey (within 4; the detail also has its other colours)")
+            name = ("a motion graphic that draws flat colours (the graphics add-on; in another order than the built-in "
+                    "renderer's), as its own clip: the export shows its red, green, blue, white and grey where it draws "
+                    "them (within 4; the detail also has its other colours)")
         if renderer == "addon" and t.graphics_addon is None:
             t.not_applicable(name, t.graphics_addon_why)
             continue
         fresh(d, 1280, 720)
         try:
             d.set_graphics_renderer(renderer)
-            r, said = rendered(lambda: d.add_graphic(code=GRAPHIC, duration_s=0.2))
+            r, said = rendered(lambda: d.add_graphic(code=graphic(renderer)[0], duration_s=0.2))
         except drv.JudgeError as e:
             r, said = None, f"the renderer could not be chosen: {e}"
         if r is None:
@@ -670,13 +846,18 @@ def graphics(t, d, o):
             o.export(f"graphic-{renderer}")
         def colours(renderer=renderer):
             cells = observe.Picture(o.path(f"graphic-{renderer}"), 0.1, AS_709).cells(4, 2, half=6)
-            n = HELD[renderer]
-            return worst(cells[:n], GRAPHIC_COLOURS[:n]) + ([tuple(round(v) for v in c) for c in cells],)
+            drawn = graphic(renderer)[1]
+            held = [k for k, c in enumerate(drawn) if GRAPHIC_COLOURS.index(c) in HELD[renderer]]
+            return worst([cells[k] for k in held], [drawn[k] for k in held]) + (
+                [tuple(round(v) for v in c) for c in cells],)
         t.measure(name, colours, lambda v: v[0] <= 4, "<= 4")
 
 
 # ---------------------------------------------------------------- an OTIO file that says nothing about colour (not
 # the original's section 4, which stays v0.2.0-only: judge/PORTING.md)
+OTIO_FROM = 6  # the OTIO clip's first frame of its media: its export is not the one of section 1 (frames 0 to 17)
+
+
 def foreign_otio(t, d, o):
     media = t.media("cs-601.mp4")
     rt = (lambda v: {"OTIO_SCHEMA": "RationalTime.1", "rate": FPS, "value": v})
@@ -684,7 +865,8 @@ def foreign_otio(t, d, o):
            "tracks": {"OTIO_SCHEMA": "Stack.1", "name": "tracks", "children": [
                {"OTIO_SCHEMA": "Track.1", "name": "V1", "kind": "Video", "children": [
                    {"OTIO_SCHEMA": "Clip.2", "name": "cs-601.mp4",
-                    "source_range": {"OTIO_SCHEMA": "TimeRange.1", "start_time": rt(0), "duration": rt(SECS)},
+                    "source_range": {"OTIO_SCHEMA": "TimeRange.1", "start_time": rt(OTIO_FROM),
+                                     "duration": rt(SECS - OTIO_FROM)},
                     "media_references": {"DEFAULT_MEDIA": {
                         "OTIO_SCHEMA": "ExternalReference.1", "target_url": "file://" + media,
                         "available_range": {"OTIO_SCHEMA": "TimeRange.1", "start_time": rt(0),
@@ -704,7 +886,11 @@ def foreign_otio(t, d, o):
     paths = {a.get("id"): a.get("path") for a in st.get("assets", [])}
     placed = [(c.get("length_frames"), paths.get(c.get("asset"))) for c in v0]
     name = o.export("foreign-otio")
-    t.measure("an OTIO file from another editor (it says nothing of its media's colours) opens with its BT.601-tagged "
-              "HD clip, and the export shows the true colours (within 4)",
-              lambda: (placed == [(SECS, media)] or what or f"the State's v0: {placed}", o.error(name)),
-              lambda v: v[0] is True and v[1][0] <= 4, f"one clip of {SECS} frames of the media; patches within 4")
+    n = SECS - OTIO_FROM
+    t.measure(f"an OTIO file from another editor (it says nothing of its media's colours) opens with its BT.601-tagged "
+              f"HD clip (frames {OTIO_FROM} to {SECS - 1} of it), and the export shows those frames of that source (the "
+              f"band) in the true colours (within 4)",
+              lambda: (placed == [(n, media)] or what or f"the State's v0: {placed}", o.error(name, 0.2),
+                       own_frames(o.path(name), "cs-601.mp4", n, (1280, 720), first=OTIO_FROM)),
+              lambda v: v[0] is True and v[1][0] <= 4 and v[2][0],
+              f"one clip of {n} frames of the media; patches within 4; its frames {OTIO_FROM} to {SECS - 1}")

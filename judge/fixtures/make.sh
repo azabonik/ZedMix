@@ -60,21 +60,23 @@
 # The colour test's sources (test_colorspace): the 8 x 4 grid of 32 flat patches (cs_patches below: full and 75 %
 # bars, skin, sky, darks, greys), each patch W/8 x H/4, coded from exact RGB with the matrix and range named and
 # tagged with the tags named and no others (setparams on the frames and the encoder's options, so any FFmpeg writes
-# the same tags), 0.6 s at 30 fps; H.264 crf 4 unless said. Each video's frames also show their own index (0 to 17) in
-# a band over the grid's top left corner (x < W/4, y < H/16; the patches' middles are below it): eight stripes of W/32,
-# stripe b grey 220 when bit b of the index is set and grey 30 when not, so a reversed, slowed or held frame is told
-# from its neighbours; the stills (cs-grid.png, .jpg), the lossless clips (cs-testsrc, cs-gridll) and cs-green have no band:
-#   cs-hd.mp4      1280x720 BT.709 limited, untagged        cs-709.mp4    1280x720 BT.709 limited, all four tags
-#   cs-601.mp4     1280x720 BT.601 limited, all four tags    cs-sd601.mp4  720x480 BT.601 limited, all four tags
-#   cs-sd.mp4      720x480 BT.601 limited, untagged          cs-sd709.mp4  720x480 BT.709 limited, all four tags
-#   cs-full709.mp4 1280x720 BT.709 full range, all four tags
-#   cs-fullnm.mp4  1280x720 BT.601 full range, only the range tagged (full)
-#   cs-partial.mp4 1280x720 BT.601 limited, only the matrix tagged (smpte170m)
-#   cs-vp9.webm    1280x720 BT.601 limited, untagged         VP9 lossless
-#   cs-rotsd.mp4   848x480 BT.601 limited, untagged, shown turned a quarter (a portrait 480x848)
-#   cs-grid.png    1280x720, RGB                            cs-grid.jpg   the same as a JPEG (quality 1)
-#   cs-cut601.mkv  1280x720 BT.601 limited, all four tags, with an opaque alpha plane   FFV1 yuva420p
-#   cs-testsrc.mp4 testsrc 1280x720 0.4 s BT.709 limited, all four tags   H.264 lossless (qp 0)
+# the same tags), 0.6 s at 30 fps; H.264 crf 4 unless said. Each picture also shows which file it is and which of its
+# frames, in a band over the grid's top left corner (x < W/2, y < H/16; the patches' middles are below it): sixteen
+# stripes of W/32, grey 220 for a set bit and grey 30 for a clear one; stripes 0 to 7 are the bits of the frame's index
+# (0 to 17; 0 in a still), stripes 8 to 15 the bits of the file's own number [n] below, so a reversed, slowed or held
+# frame is told from its neighbours and a frame of one file from a frame of another; the lossless grid (cs-gridll) and
+# cs-green have no band:
+#   cs-hd.mp4      [1] 1280x720 BT.709 limited, untagged     cs-709.mp4    [2] 1280x720 BT.709 limited, all four tags
+#   cs-601.mp4     [3] 1280x720 BT.601 limited, all four tags cs-sd601.mp4 [4] 720x480 BT.601 limited, all four tags
+#   cs-sd.mp4      [5] 720x480 BT.601 limited, untagged      cs-sd709.mp4  [6] 720x480 BT.709 limited, all four tags
+#   cs-full709.mp4 [7] 1280x720 BT.709 full range, all four tags
+#   cs-fullnm.mp4  [8] 1280x720 BT.601 full range, only the range tagged (full)
+#   cs-partial.mp4 [9] 1280x720 BT.601 limited, only the matrix tagged (smpte170m)
+#   cs-vp9.webm    [10] 1280x720 BT.601 limited, untagged    VP9 lossless
+#   cs-cut601.mkv  [11] 1280x720 BT.601 limited, all four tags, with an opaque alpha plane   FFV1 yuva420p
+#   cs-rotsd.mp4   [12] 848x480 BT.601 limited, untagged, shown turned a quarter (a portrait 480x848)
+#   cs-grid.png    [13] 1280x720, RGB                       cs-grid.jpg   [14] the same grid as a JPEG (quality 1)
+#   cs-testsrc.mp4 [15] testsrc 1280x720 0.4 s (12 frames) BT.709 limited, all four tags   H.264 lossless (qp 0)
 #   cs-gridll.mp4  the grid 1280x720 0.4 s BT.709 limited, all four tags   H.264 lossless (qp 0)
 #   cs-green.mp4   1280x720 0.4 s, 1EC83C with a C83C32 rectangle in its middle 40 %, BT.709 limited, untagged
 # The tones are at amplitude 1/8 (peak about -18 dBFS). The frame rate is the source's (rate=30), never -r.
@@ -267,11 +269,14 @@ tagopts() {
   [ "$3" = - ] || o="$o -color_trc $3"; [ "$4" = - ] || o="$o -color_range $4"
   printf '%s' "$o"
 }
-# The frame's index over the grid's top left corner (x < W/4, y < H/16, above the middles of the top row's patches):
-# eight stripes, stripe b grey 220 when bit b of the frame's index is set, grey 30 when not (in RGB, before the coding)
-CS_BIT="if(lt(Y\\,H/16)*lt(X\\,W/4)\\,if(mod(floor(N/pow(2\\,floor(X*32/W)))\\,2)\\,220\\,30)"
-CS_BAND="format=gbrp,geq=r='$CS_BIT\\,r(X\\,Y))':g='$CS_BIT\\,g(X\\,Y))':b='$CS_BIT\\,b(X\\,Y))',format=rgb24"
-# patches <file> <w> <h> <matrix> <range> <codec> <space> <primaries> <transfer> <range tag>
+# cs_band <n>: the band over the grid's top left corner (x < W/2, y < H/16, above the middles of the top row's
+# patches): sixteen stripes of W/32, stripe b grey 220 when bit b mod 8 of its number is set, grey 30 when not, the
+# number being the frame's index for stripes 0 to 7 and <n> for stripes 8 to 15 (in RGB, before the coding)
+cs_band() {
+  local bit="if(lt(Y\\,H/16)*lt(X\\,W/2)\\,if(mod(floor(if(lt(X\\,W/4)\\,N\\,$1)/pow(2\\,mod(floor(X*32/W)\\,8)))\\,2)\\,220\\,30)"
+  printf '%s' "format=gbrp,geq=r='$bit\\,r(X\\,Y))':g='$bit\\,g(X\\,Y))':b='$bit\\,b(X\\,Y))',format=rgb24"
+}
+# patches <file> <w> <h> <matrix> <range> <codec> <space> <primaries> <transfer> <range tag> <number>
 patches() {
   local f="$1" w="$2" h="$3" m="$4" rg="$5" codec="$6" pix=yuv420p enc
   case "$codec" in
@@ -280,22 +285,22 @@ patches() {
     ffv1) enc="-c:v ffv1"; pix=yuva420p ;;
   esac
   # shellcheck disable=SC2046,SC2086
-  "$FF" -nostdin -hide_banner -loglevel error -y -filter_complex "$(grid "$w" "$h" 0.6),$CS_BAND,scale=out_color_matrix=$m:out_range=$rg:flags=lanczos+accurate_rnd+full_chroma_int,format=$pix,$(tagstep "$7" "$8" "$9" "${10}")" \
+  "$FF" -nostdin -hide_banner -loglevel error -y -filter_complex "$(grid "$w" "$h" 0.6),$(cs_band "${11}"),scale=out_color_matrix=$m:out_range=$rg:flags=lanczos+accurate_rnd+full_chroma_int,format=$pix,$(tagstep "$7" "$8" "$9" "${10}")" \
     $enc -pix_fmt $pix $(tagopts "$7" "$8" "$9" "${10}") "$OUT/$f"
 }
-if want cs-hd.mp4; then patches cs-hd.mp4 1280 720 bt709 tv h264 - - - -; fi
-if want cs-709.mp4; then patches cs-709.mp4 1280 720 bt709 tv h264 bt709 bt709 bt709 tv; fi
-if want cs-601.mp4; then patches cs-601.mp4 1280 720 bt601 tv h264 smpte170m smpte170m smpte170m tv; fi
-if want cs-sd601.mp4; then patches cs-sd601.mp4 720 480 bt601 tv h264 smpte170m smpte170m smpte170m tv; fi
-if want cs-sd.mp4; then patches cs-sd.mp4 720 480 bt601 tv h264 - - - -; fi
-if want cs-sd709.mp4; then patches cs-sd709.mp4 720 480 bt709 tv h264 bt709 bt709 bt709 tv; fi
-if want cs-full709.mp4; then patches cs-full709.mp4 1280 720 bt709 pc h264 bt709 bt709 bt709 pc; fi
-if want cs-fullnm.mp4; then patches cs-fullnm.mp4 1280 720 bt601 pc h264 - - - pc; fi
-if want cs-partial.mp4; then patches cs-partial.mp4 1280 720 bt601 tv h264 smpte170m - - -; fi
-if want cs-vp9.webm; then patches cs-vp9.webm 1280 720 bt601 tv vp9 - - - -; fi
-if want cs-cut601.mkv; then patches cs-cut601.mkv 1280 720 bt601 tv ffv1 smpte170m smpte170m smpte170m tv; fi
+if want cs-hd.mp4; then patches cs-hd.mp4 1280 720 bt709 tv h264 - - - - 1; fi
+if want cs-709.mp4; then patches cs-709.mp4 1280 720 bt709 tv h264 bt709 bt709 bt709 tv 2; fi
+if want cs-601.mp4; then patches cs-601.mp4 1280 720 bt601 tv h264 smpte170m smpte170m smpte170m tv 3; fi
+if want cs-sd601.mp4; then patches cs-sd601.mp4 720 480 bt601 tv h264 smpte170m smpte170m smpte170m tv 4; fi
+if want cs-sd.mp4; then patches cs-sd.mp4 720 480 bt601 tv h264 - - - - 5; fi
+if want cs-sd709.mp4; then patches cs-sd709.mp4 720 480 bt709 tv h264 bt709 bt709 bt709 tv 6; fi
+if want cs-full709.mp4; then patches cs-full709.mp4 1280 720 bt709 pc h264 bt709 bt709 bt709 pc 7; fi
+if want cs-fullnm.mp4; then patches cs-fullnm.mp4 1280 720 bt601 pc h264 - - - pc 8; fi
+if want cs-partial.mp4; then patches cs-partial.mp4 1280 720 bt601 tv h264 smpte170m - - - 9; fi
+if want cs-vp9.webm; then patches cs-vp9.webm 1280 720 bt601 tv vp9 - - - - 10; fi
+if want cs-cut601.mkv; then patches cs-cut601.mkv 1280 720 bt601 tv ffv1 smpte170m smpte170m smpte170m tv 11; fi
 if want cs-rotsd.mp4; then
-  patches cs-rotsd-flat.mp4 848 480 bt601 tv h264 - - - -
+  patches cs-rotsd-flat.mp4 848 480 bt601 tv h264 - - - - 12
   # a quarter turn for display: FFmpeg 6 and later take it as an input option, earlier ones as the rotate tag (each
   # gives the display matrix that ffprobe reports as rotation 90; grep reads all of the help, so no pipe is cut short)
   if "$FF" -hide_banner -h full 2>/dev/null | grep -- '-display_rotation' > /dev/null; then
@@ -307,19 +312,23 @@ if want cs-rotsd.mp4; then
   fi
   rm -f "$OUT/cs-rotsd-flat.mp4"
 fi
-if want cs-grid.png || want cs-grid.jpg; then
-  "$FF" -nostdin -hide_banner -loglevel error -y -filter_complex "$(grid 1280 720 0.04)" -frames:v 1 "$OUT/cs-grid.png"
+if want cs-grid.png; then
+  "$FF" -nostdin -hide_banner -loglevel error -y -filter_complex "$(grid 1280 720 0.04),$(cs_band 13)" -frames:v 1 \
+    "$OUT/cs-grid.png"
 fi
 if want cs-grid.jpg; then
-  "$FF" -nostdin -hide_banner -loglevel error -y -i "$OUT/cs-grid.png" -q:v 1 "$OUT/cs-grid.jpg"
-  want cs-grid.png || rm -f "$OUT/cs-grid.png"
+  # the JPEG's own number (14) is drawn on a picture of its own, coded once as the JPEG and then removed
+  "$FF" -nostdin -hide_banner -loglevel error -y -filter_complex "$(grid 1280 720 0.04),$(cs_band 14)" -frames:v 1 \
+    "$OUT/cs-grid14.png"
+  "$FF" -nostdin -hide_banner -loglevel error -y -i "$OUT/cs-grid14.png" -q:v 1 "$OUT/cs-grid.jpg"
+  rm -f "$OUT/cs-grid14.png"
 fi
 LL709="-c:v libx264 -preset medium -qp 0 -pix_fmt yuv420p -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv"
 SCALE709="scale=out_color_matrix=bt709:out_range=tv:flags=lanczos+accurate_rnd+full_chroma_int,format=yuv420p,$(tagstep bt709 bt709 bt709 tv)"
 if want cs-testsrc.mp4; then
   # shellcheck disable=SC2086
   "$FF" -nostdin -hide_banner -loglevel error -y -f lavfi -i "testsrc=size=1280x720:rate=30:duration=0.4" \
-    -vf "$SCALE709" $LL709 "$OUT/cs-testsrc.mp4"
+    -vf "$(cs_band 15),$SCALE709" $LL709 "$OUT/cs-testsrc.mp4"
 fi
 if want cs-gridll.mp4; then
   # shellcheck disable=SC2086

@@ -1,5 +1,5 @@
 """Keys, measured on exports: a colour key with its colour found by the editor (`auto`) on a grey screen with white,
-black and red boxes; a key after a colour grade; a pillarboxed picture whose bars stay transparent after its key; a
+black and red boxes; a key after a colour grade (saturation 0.5, which the red box shows); a pillarboxed picture whose bars stay transparent after its key; a
 green screen keyed with `auto` and its spill pulled down by despill; a black background keyed by brightness (`lumakey
 auto`); and the colour the editor finds for a key (detect_key_colour). Port of packages/core/scripts/smoke-key.ts
 (judge/PORTING.md has the map of its sections).
@@ -12,8 +12,9 @@ The colour `auto` resolves to is read from get_state and must be the one detect_
 the screen's grey (a flat grey decodes exactly); the export then shows that the key removed exactly that screen.
 Whether a chroma key on that grey also removes the white and black boxes is not specified (PROTOCOL.md, "Effects"), so
 the original's check that it does stays with that script (judge/PORTING.md, key 1). Last, a keyed noisy clip exports
-the same frames twice: a check of its own, since the original's section 5 (the same frames whatever the filter thread
-count) needs a thread count the judge cannot choose.
+the same frames each time (the second export plays it from its second frame, so the first does not pass for it): a
+check of its own, since the original's section 5 (the same frames whatever the filter thread count) needs a thread
+count the judge cannot choose.
 
 Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
 """
@@ -29,6 +30,10 @@ FPS = 30
 # The flat grey screen is 0x808080 coded as BT.601 limited range (Y 126, U and V 128), which decodes to 128 exactly; a
 # key colour found 2 levels off would still key the screen, so only get_state's colour shows it (judge/PORTING.md, key 1).
 GREY_TOL = 1
+# The grade ahead of the key (section 1): saturation 0.5, and the red box's red over its green and blue after it, as
+# a share of the ungraded export's: v0.2.0 and this tree read 125 against 254 (49 %; the box (164, 39, 36)) with
+# FFmpeg 4.4 and 9.0.2-17; a copy of the ungraded export reads 100 %.
+GRADE_SAT, GRADED_RED = 0.5, (0.25, 0.8)
 
 
 class Exports:
@@ -126,13 +131,22 @@ def run(t):
     px("colorkey", 1, 250, 1150, RED, "the red box is kept", 60)
     px("colorkey", 1, 705, 1150, BLACK, "the black outline of the target is kept")
     px("colorkey", 1, 830, 1150, WHITE, "the white middle of the target is kept")
-    # A colour grade ahead of the key: it still keys.
+    # A colour grade ahead of the key: it still keys. The grade halves the saturation (the original's 1.3 leaves this
+    # picture's pure colours as they are, so its export would be the one above): the grey screen stays grey and keys,
+    # and the red box shows the grade, so the export is not the one before it.
     d.apply_effect(over, "colorkey", color="0x808080", effect_id=ck)
-    d.apply_colour(over, saturation=1.3)
+    d.apply_colour(over, saturation=GRADE_SAT)
     x.export("graded-key")
-    px("graded-key", 1, 540, 1650, BLUE, "a graded clip (saturation 1.3): the grey still keys to blue")
+    px("graded-key", 1, 540, 1650, BLUE, f"a graded clip (saturation {GRADE_SAT}): the grey still keys to blue")
     px("graded-key", 1, 250, 450, WHITE, "a graded clip: the white box is kept")
-    px("graded-key", 1, 250, 1150, RED, "a graded clip: the red box is kept", 60)
+
+    def graded_red():
+        before, after = x.sample("colorkey", 1, 250, 1150), x.sample("graded-key", 1, 250, 1150)
+        return before, after, [c[0] - max(c[1], c[2]) for c in (before, after)]
+    m(f"a graded clip: the red box is kept and shows the grade (saturation {GRADE_SAT}: still red, its red over its "
+      f"green and blue {GRADED_RED[0]:.0%} to {GRADED_RED[1]:.0%} of the ungraded export's)", graded_red,
+      lambda v: v[2][0] > 100 and GRADED_RED[0] * v[2][0] <= v[2][1] <= GRADED_RED[1] * v[2][0],
+      "the box before, after, and red - max(green, blue) of each")
 
     # ---- 2. the same picture pillarboxed on a 1280x720 canvas: its transparent bars stay transparent after the key
     over = layered(t, d, 1280, 720, "key-blue-l.mp4", "key-grey.mp4", v1)
@@ -186,16 +200,25 @@ def run(t):
     noisy = d.place_clip(d.import_media(t.media("key-noisy.mkv")), "v0", 0, 0)
     d.apply_effect(noisy, "chromakey", color="0x00FF00", params={"despill": 0.5})
     x.export("noisy-a", lossless=True)
+    # The second export plays the clip from its second frame: its 5 frames must be frames 1 to 5 of the first export,
+    # sample for sample, and frames that follow each other differ (the noise moves), so the first export does not
+    # pass for the second.
+    d.trim_clip(noisy, in_frame=1)
     x.export("noisy-b", lossless=True)
+    one = 320 * 240 * 3 // 2
 
     def same():
         a, b = (x.out[n] for n in ("noisy-a", "noisy-b"))
         for _, failed in (a, b):
             if failed:
                 raise observe.Unmeasurable(failed)
-        fa = observe.pixels(a[0], 0, "null", "yuv420p", frames=6)
-        fb = observe.pixels(b[0], 0, "null", "yuv420p", frames=6)
-        return len(fa), len(fb), sum(1 for p, q in zip(fa, fb) if p != q)
-    m("a keyed noisy clip (chromakey with despill 0.5) exports the same frames twice (lossless; every sample of 6 "
-      "frames)", same, lambda v: v[0] == v[1] == 320 * 240 * 3 // 2 * 6 and v[2] == 0,
-      "6 whole frames each, no sample different")
+        fa = observe.pixels(a[0], 0, "null", "yuv420p", frames=7)
+        fb = observe.pixels(b[0], 0, "null", "yuv420p", frames=7)
+        moves = min(sum(1 for p, q in zip(fa[k * one:(k + 1) * one], fa[(k + 1) * one:(k + 2) * one]) if p != q)
+                    for k in range(5))
+        return len(fa) // one, len(fb) // one, sum(1 for p, q in zip(fa[one:], fb) if p != q), moves
+    m("a keyed noisy clip (chromakey with despill 0.5) exports the same frames each time (lossless): played from its "
+      "second frame, its 5 frames are frames 1 to 5 of the export of the whole clip, every sample (and frames that "
+      "follow each other differ: the least number of samples that differ, last)", same,
+      lambda v: v[0] == 6 and v[1] == 5 and v[2] == 0 and v[3] >= one // 10,
+      "6 frames, then 5, no sample different, and 10 % or more of a frame's samples move between frames")

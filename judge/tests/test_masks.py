@@ -27,6 +27,10 @@ Every picture is a fixture of make.sh (mk-*: exact RGB stills, and an FFV1 clip 
 (PROTOCOL.md, "Exports"), so the pixels are the compositing's own values. Colours are read from an export as BT.709
 limited range (as it is written), as the mean of a small block, with the original's tolerances.
 
+Two exports that would look the same by design (a mode set back to normal and a clip that never had one; a turned
+clip and a turned mask) differ in length (the picture below runs TAIL frames longer in the second), and the third of
+the render_frame shots moves the mask, so no earlier export or frame passes for another (README.md, threat model).
+
 Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
 """
 import observe
@@ -50,6 +54,7 @@ MODES = ["normal", "multiply", "screen", "overlay", "darken", "lighten", "color-
 CASES = [(mode, 1) for mode in MODES] + [(mode, 0.6) for mode in ("screen", "add", "soft-light", "color-dodge",
                                                                     "multiply")]
 SEG = 8  # frames per v1 clip of the blend modes
+TAIL = 3  # frames by which an export runs longer than the one it must not be taken for
 
 
 def _soft_light(b, s):
@@ -237,9 +242,11 @@ def blend_modes(t, d, s, v1):
             t.check(f"{label}: visibly differs from normal layering", v is not None and v[3],
                     "no cell where the formula is 20 or more from normal and the export within 6 of it" if v else
                     "unmeasurable")
-    # A mode set back to normal exports the same frames as a clip that never had one.
+    # A mode set back to normal exports the same frames as a clip that never had one. Before the last export the
+    # bands run TAIL frames longer (the bands alone), so each of the three exports has a length of its own and none of
+    # them passes for another.
     edits.clear(d)
-    d.place_clip(bands, "v0", 0, 0, SEG)
+    under = d.place_clip(bands, "v0", 0, 0, SEG)
     pc = d.place_clip(greys, v1, 0, 0, SEG)
     d.set_transform(pc, opacity=0.7)
     s.export("plain-a")
@@ -248,31 +255,35 @@ def blend_modes(t, d, s, v1):
     s.export("plain-m")
     d.set_blend_mode(pc, "normal")
     mode_reset = edits.clip(d.get_state(), pc)
+    d.trim_clip(under, out_frame=SEG + TAIL)
     s.export("plain-b")
     t.check("get_state shows the clip's blend mode: multiply once set, normal once set back",
             (mode_set or {}).get("blend_mode") == "multiply" and (mode_reset or {}).get("blend_mode") == "normal",
             f"after multiply: {(mode_set or {}).get('blend_mode')!r}; after normal: {(mode_reset or {}).get('blend_mode')!r}")
 
+    one = W * H * 3 // 2
+
     def frames(name):
-        return observe.pixels(s.path(name), 0, "null", "yuv420p", frames=SEG)
+        return observe.pixels(s.path(name), 0, "null", "yuv420p", frames=SEG + TAIL + 1)
 
     def diff(x, y):
         fx, fy = frames(x), frames(y)
-        return len(fx), len(fy), max((abs(p - q) for p, q in zip(fx, fy)), default=None), \
-            sum(1 for p, q in zip(fx, fy) if abs(p - q) > 10)
-    whole = W * H * 3 // 2 * SEG
-    t.measure("normal, set back after multiply, exports the same frames as a clip that never had a blend mode "
-              "(every sample of the 8 frames within 1)", lambda: diff("plain-a", "plain-b"),
-              lambda v: v[0] == v[1] == whole and v[2] is not None and v[2] <= 1,
-              "8 whole frames each, the largest difference <= 1")
-    t.measure("multiply changes the frames", lambda: diff("plain-a", "plain-m"), lambda v: v[3] > 1000,
-              "more than 1000 samples 10 or more apart")
+        return len(fx) // one, len(fy) // one, max((abs(p - q) for p, q in zip(fx[:SEG * one], fy)), default=None), \
+            sum(1 for p, q in zip(fx[:SEG * one], fy) if abs(p - q) > 10)
+    t.measure(f"normal, set back after multiply, exports the same frames as a clip that never had a blend mode "
+              f"(every sample of the 8 frames within 1; the first export {SEG} frames, the second {SEG + TAIL}: the "
+              f"bands run {TAIL} frames longer)", lambda: diff("plain-a", "plain-b"),
+              lambda v: v[0] == SEG and v[1] == SEG + TAIL and v[2] is not None and v[2] <= 1,
+              f"{SEG} and {SEG + TAIL} frames, the largest difference <= 1")
+    t.measure(f"multiply changes the frames ({SEG} frames each)", lambda: diff("plain-a", "plain-m"),
+              lambda v: v[0] == v[1] == SEG and v[3] > 1000,
+              f"{SEG} frames each, more than 1000 samples 10 or more apart")
 
 
 def masks(t, d, s, v1):
     edits.clear(d)
     blue, redsq = d.import_media(t.media("mk-blue.png")), d.import_media(t.media("mk-redsq.png"))
-    d.place_clip(blue, "v0", 0, 0, FPS)
+    under = d.place_clip(blue, "v0", 0, 0, FPS)
     over = d.place_clip(redsq, v1, 0, 0, FPS)
 
     def px(name, x, y, want, label, tol=12):
@@ -362,31 +373,42 @@ def masks(t, d, s, v1):
     s.export("rot-clip")
     px("rot-clip", C[0], C[1] - 120, RED, "the clip turned 90 degrees: the band is vertical (above the middle)")
     px("rot-clip", C[0] + 60, C[1], BLUE, "the clip turned 90 degrees: beside the band")
+    # The second of these exports runs TAIL frames longer (the blue below alone), so the first does not pass for it.
     d.set_transform(over, rotation=0)
     d.set_mask(over, rotation=90)
+    d.trim_clip(under, out_frame=FPS + TAIL)
     s.export("rot-mask")
+    d.trim_clip(under, out_frame=FPS)
     px("rot-mask", C[0], C[1] - 120, RED, "the mask turned 90 degrees: the same vertical band")
     pts = ((320, 60), (320, 300), (380, 180), (260, 180), (340, 100))
-    t.measure("the clip turned 90 degrees and the mask turned 90 degrees give the same picture (a square clip; five "
-              "points within 6)", lambda: [(s.pic("rot-clip").mean(x, y, 1), s.pic("rot-mask").mean(x, y, 1))
-                                           for x, y in pts], lambda v: all(near(a, b, 6) for a, b in v),
-              "each point within 6")
+    t.measure(f"the clip turned 90 degrees and the mask turned 90 degrees give the same picture (a square clip; five "
+              f"points within 6; the second export {FPS + TAIL} frames long, the first {FPS})",
+              lambda: ([(s.pic("rot-clip").mean(x, y, 1), s.pic("rot-mask").mean(x, y, 1)) for x, y in pts],
+                       [observe.decode(s.path(n))["video_frames"] for n in ("rot-clip", "rot-mask")]),
+              lambda v: all(near(a, b, 6) for a, b in v[0]) and v[1] == [FPS, FPS + TAIL],
+              "each point within 6; the frames of each export")
     # A blend mode with a mask: screen inside a circle (red screen blue is magenta).
     d.set_mask(over, shape="ellipse", w=0.5, h=0.5, rotation=0)
     d.set_blend_mode(over, "screen")
     s.export("blend-mask")
     px("blend-mask", *C, (255, 0, 255), "screen with a mask: magenta inside the circle")
     px("blend-mask", C[0] + 120, C[1], BLUE, "screen with a mask: the track below untouched outside it")
-    # render_frame shows a mask change at once, and the mask put back.
+    # render_frame shows a mask change at once, and the mask made large again, moved right by a tenth of the picture
+    # (36 px: so the third frame is neither of the first two).
     shots = [s.render("frame-1", 0.5)]
     d.set_mask(over, w=0.2, h=0.2)
     shots.append(s.render("frame-2", 0.5))
-    d.set_mask(over, w=0.5, h=0.5)
+    d.set_mask(over, w=0.5, h=0.5, x=0.6)
     shots.append(s.render("frame-3", 0.5))
-    reds = (lambda: [s.pic(n, 0).px(C[0] + 70, C[1])[0] for n in shots])
-    t.measure("render_frame shows a mask change at once: 70 px right of the middle is inside the circle, then outside "
-              "the smaller one", reds, lambda v: v[0] > 200 and v[1] < 60, "red > 200, then < 60")
-    t.measure("...and the mask put back: inside again", reds, lambda v: v[2] > 200, "red > 200")
+    d.set_mask(over, x=0.5)
+    reds = (lambda: [[s.pic(n, 0).px(C[0] + dx, C[1])[0] for dx in (70, -70)] for n in shots])
+    t.measure("render_frame shows a mask change at once: 70 px right of the middle (and 70 px left) is inside the "
+              "circle, then outside the smaller one", reds,
+              lambda v: v[0][0] > 200 and v[0][1] > 200 and v[1][0] < 60 and v[1][1] < 60,
+              "red > 200, then < 60 (right, left)")
+    t.measure("...and the mask large again and moved right (x 0.6, its middle 36 px right): 70 px right of the old "
+              "middle inside, 70 px left of it outside (106 px from the new middle)", reds,
+              lambda v: v[2][0] > 200 and v[2][1] < 60, "red > 200 right, < 60 left")
     # Undo: one step each.
     before = (edits.clip(d.get_state(), over) or {}).get("mask")
     d.set_mask(over, shape="none")
@@ -453,10 +475,11 @@ def keyframed(t, d, s, v1):
     again = s.render("keyframes-redone", 0)
     t.measure("one undo takes the keyframes back: at its first frame the clip is at its set scale (1), the circle 90 "
               "px (render_frame: red 60 px right of its middle, blue 110 px right); redo brings them back (blue 60 px "
-              "right again)",
-              lambda: [s.pic(n, 0).mean(x, C[1], 1) for n in (shot, again) for x in (p + 60, p + 110)],
-              lambda v: near(v[0], RED, 12) and near(v[1], BLUE, 12) and near(v[2], BLUE, 12) and near(v[3], BLUE, 12),
-              "red, blue; then blue, blue; +- 12 a channel")
+              "right again, the 45 px circle red at its middle and 35 px right)",
+              lambda: [s.pic(n, 0).mean(x, C[1], 1) for n in (shot, again) for x in (p + 60, p + 110, p, p + 35)],
+              lambda v: near(v[0], RED, 12) and near(v[1], BLUE, 12) and near(v[4], BLUE, 12) and near(v[5], BLUE, 12)
+              and near(v[6], RED, 12) and near(v[7], RED, 12),
+              "undone: red, blue; redone: blue, blue, and red at its middle and 35 px right; +- 12 a channel")
     d.set_track(v1, locked=True)
     ok, why = edits.refused_unchanged(d, lambda: d.set_keyframes(clip, "scale", [{"frame": 0, "value": 0.3}]))
     t.check("set_keyframes on a clip on a locked track: refused, nothing changes", ok, why)
@@ -487,11 +510,15 @@ def keyed_and_alpha(t, d, s, v1):
     s.export("alpha")
     px("alpha", 320, 120, RED, "an alpha clip with a mask: the disc above the line shows")
     px("alpha", 320, 240, BLUE, "an alpha clip with a mask: the disc below the line is masked")
-    px("alpha", 40, 40, BLUE, "an alpha clip with a mask: its transparent part above the line stays transparent")
+    px("alpha", 190, 90, BLUE, "an alpha clip with a mask: its transparent part above the line, outside the disc, "
+       "stays transparent")
     d.set_mask(a, invert=True)
     s.export("alpha-inv")
     px("alpha-inv", 320, 240, RED, "an alpha clip with an inverted mask: the disc below the line shows")
-    px("alpha-inv", 40, 320, BLUE, "an alpha clip with an inverted mask: its transparency is kept below the line")
+    t.measure("an alpha clip with an inverted mask: its transparency is kept below the line (outside the disc), and "
+              "above the line the disc is masked: (0,0,255) +-14 at both",
+              lambda: [s.pic("alpha-inv").mean(x, y, 1) for x, y in ((190, 270), (320, 120))],
+              lambda v: all(near(c, BLUE, 14) for c in v), "(0,0,255) +- 14 a channel, at each")
     # An adjustment layer (black and white) limited to the left half by its mask.
     edits.clear(d)
     d.place_clip(d.import_media(t.media("mk-bands.png")), "v0", 0, 0, FPS)
@@ -578,8 +605,10 @@ def blend_edges(t, d, s, v1):
     d.set_transition(follower, "fade", 10)
     d.set_blend_mode(lead, "screen")
     s.render("run-1", 3.0)
-    px("run-1", *C, (255, 0, 255), "a run in screen: red over blue is magenta where only its second clip shows "
-       "(render_frame)", 8, 0, 0)
+    t.measure("a run in screen: red over blue is magenta where only its second clip shows, all over the canvas "
+              "(render_frame; the middle and the top left corner): (255,0,255) +-8",
+              lambda: [s.pic("run-1", 0).mean(x, y, 0) for x, y in (C, (20, 20))],
+              lambda v: all(near(c, (255, 0, 255), 8) for c in v), "(255,0,255) +- 8 a channel, at each")
     d.clear_effects(lead)
     s.render("run-2", 3.0)
     px("run-2", *C, RED, "after the run's first clip loses its mode (clear_effects), that frame composites normally: "

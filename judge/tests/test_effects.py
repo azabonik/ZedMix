@@ -21,9 +21,11 @@ clip's transparency leaves a fringe: each such column's mean over rows 10..169, 
 EDGE_TOL), and in the picture's middle. A control segment without an effect shows both. A key effect (chromakey,
 colorkey, lumakey) may make the picture transparent too, so only its bars and the columns beside the picture are
 checked; a blur, a mosaic and a lens warp spread the picture's edge, so only the far edges of their bars are checked,
-and only at their defaults (as the original).
+and only at their defaults (as the original). Each group's exports run TAIL frames longer than the group before's
+(the colour below alone), so an export of another group does not pass for this one's (README.md, threat model).
 
-Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
+Every check is recorded on every path: a check whose input is missing fails with the reason, and an export or an
+effect the editor refuses fails the checks on it with the editor's answer while the test goes on. So CHECKS is exact.
 """
 import os
 
@@ -82,6 +84,15 @@ def clear(d):
     for tr in d.get_state().get("tracks", []):
         for c in tr.get("clips", []):
             d.remove_clip(c["id"])
+
+
+def export(d, path):
+    """The export's job, or {"status": "refused: <the editor's answer>"} when the editor refuses it, so the checks on
+    that export fail with the reason and the test goes on (every check is recorded on every path)."""
+    try:
+        return d.export(path)
+    except drv.JudgeError as e:
+        return {"status": f"refused: {str(e)[:300]}"}
 
 
 def effects_of(d, clip):
@@ -201,10 +212,13 @@ def stack(t, d, bars):
     clear(d)
     c = d.place_clip(bars, "v0", 0, 0, 60)
     for e in EFFECTS:
-        d.apply_effect(c, e, enabled=False if e == "pixelate" else None)
+        try:
+            d.apply_effect(c, e, enabled=False if e == "pixelate" else None)
+        except drv.JudgeError:
+            pass  # the check below names the effects get_state shows
     names = [x.get("effect") for x in effects_of(d, c) or []]
     out = t.path("out", "stack.mp4")
-    job = d.export(out)
+    job = export(d, out)
     dec, why = None, job.get("status")
     if job.get("status") == "done":
         try:
@@ -226,7 +240,7 @@ def stack(t, d, bars):
     st = d.get_state()
     layer = next((x for tr in st.get("tracks", []) for x in tr.get("clips", []) if x.get("id") == adj), None)
     out2 = t.path("out", "stack-adjusted.mp4")
-    job2 = d.export(out2)
+    job2 = export(d, out2)
     ok, why2 = False, what or job2.get("status")
     if what is None and job2.get("status") == "done":
         try:
@@ -258,7 +272,7 @@ def stack(t, d, bars):
     st = d.get_state()
     layer = next((x for tr in st.get("tracks", []) for x in tr.get("clips", []) if x.get("id") == adj), None)
     out3 = t.path("out", "stack-vignette-key.mp4")
-    job3 = d.export(out3)
+    job3 = export(d, out3)
     ok, why3 = False, what or job3.get("status")
     if what is None and job3.get("status") == "done":
         try:
@@ -325,6 +339,7 @@ def shows_base(a, b):
 BASE_A, BASE_B = (224, 32, 224), (32, 200, 64)   # fx-base.mp4 and fx-base2.mp4 as the export shows them (about)
 PICTURE = list(range(60, 260))   # the middle of the picture (it covers x 40..279)
 GROUP = 14  # segments per export (a timeline of many clips exports far slower than a few of fewer)
+TAIL = 3    # frames of the colour below after a group's clips, for each group before it
 
 
 def letterbox(t, d, upper):
@@ -349,10 +364,14 @@ def letterbox(t, d, upper):
                     why = str(ex)[:200]
             placed.append(why)
         outs = []
+        # The base runs TAIL x the group's number of frames past the group's clips: each group's exports have a
+        # length of their own, so an export of another group (whose clips keep the letterbox transparent as well)
+        # does not pass for this one's.
+        frames = SEG * len(group) + TAIL * (g // GROUP)
         for k, base in enumerate(bases):
-            under = d.place_clip(base, "v0", 0, 0, SEG * len(group))
+            under = d.place_clip(base, "v0", 0, 0, frames)
             out = t.path("out", f"letterbox{g // GROUP}-{k}.mp4")
-            job = d.export(out)
+            job = export(d, out)
             d.remove_clip(under)
             ok, dec = job.get("status") == "done", None
             if ok:
@@ -360,12 +379,13 @@ def letterbox(t, d, upper):
                     dec = observe.decode(out)
                 except observe.Unmeasurable as ex:
                     job = {"status": f"unmeasurable: {ex}"}
-            decoded.append((len(group), job.get("status"), dec))
+            decoded.append((frames, job.get("status"), dec))
             outs.append(out if ok else None)
         where += [(outs, (i * SEG + SEG // 2) / FPS) for i in range(len(group))]
     t.check(f"the exports with a clip for every effect at its defaults and at the ends of its ranges ({len(VARIANTS)}, "
-            f"{GROUP} to an export, over two colours) decode clean",
-            all(dec is not None and dec["clean"] and abs(dec["video_frames"] - n * SEG) <= 1 for n, _, dec in decoded),
+            f"{GROUP} to an export, over two colours) decode clean, each with its own number of frames (its clips, "
+            f"and {TAIL} more frames of the colour below for each group before it)",
+            all(dec is not None and dec["clean"] and abs(dec["video_frames"] - n) <= 1 for n, _, dec in decoded),
             [(st, dec and {k: dec[k] for k in ("exit", "video_frames", "clean", "stderr")}) for _, st, dec in decoded])
 
     rows = range(BAND[1])
@@ -433,7 +453,7 @@ def vignette(t, d):
             if name == "bypassed":
                 d.apply_effect(clip, "vignette", effect_id=e, enabled=False)
     out = t.path("out", "vignette.mp4")
-    job = d.export(out)
+    job = export(d, out)
     lum = {}
     why = f"export {job.get('status')}"
     if job.get("status") == "done":
