@@ -2,7 +2,7 @@
 # .github/workflows/judge.yml, sorted by path from the repository root (scripts/check-judge-lock.mjs).
 # The agents that rewrite the editor must not change the judge. The gauntlet reviews a change to this file on its PR.
 56ffaefe1bb97981a6cf275e4bf8af79cd32f79b5b01e05856ad83dff279e2c4  .github/workflows/judge.yml
-c0b85081db11e135a4f782f73d7bc6a9ffbed48ed388f2324da7510761b89542  judge/PORTING.md
+3eeb3c64f738ccb803e0998be2b47b57d5c871f8ac59e38879e844aebeee2c1e  judge/PORTING.md
 0b858ca7c9e8487a35e48933023a56690755bb512b821413bdeb72715e381733  judge/PROTOCOL.md
 3e23f033e23a10ead2e5147c16c3b8eac0d52a961eca6351d8d86041dd62cc3a  judge/README.md
 eca422729904121a2c7b8d2f36647a5cab98bd7415fb9481f0887e427e4a7773  judge/adapters/v020/adapter.py
@@ -30,7 +30,7 @@ c623a4a816d704ae2318996eb9aedf67c07c8306d3d47eb073ea5ae15279b7cd  judge/fixtures
 3779f59fa128125e0518da4966349398787ff842a006a8501807965fdcc443ca  judge/selftest.py
 4cf18c97e6a9e272145bb7301f70d53459a4e88eda558f1c088814e77fc549d0  judge/tests/test_audio_effects.py
 16c4f1e9457f09ff89dd6ea4da46664145ceca042ae6507e91360f44f4b65ac5  judge/tests/test_audio_layouts.py
-1b6dd772f791008cebb285c957d21d06a4a4b70e7ba67ecb9006d5fd68c8dc48  judge/tests/test_bleeps.py
+f19ed7beb12c5dccc0c50a08874c0f41ec725adca88a3d9ba00f6b07677d9f38  judge/tests/test_bleeps.py
 93e86a8a5ca44ecbbfaeccb797801b591e2df33d3ebb92bb9b9d8bafda8c7241  judge/tests/test_cli_migrate.py
 8ca347c9ee9077ad9203ed89f079c959f9483efbac130a6b83307eee6fc83e26  judge/tests/test_colorspace.py
 5390b3b4ada9fbd28f06de83d68448299fc30277758ece60aac243b40cf25489  judge/tests/test_cuts.py

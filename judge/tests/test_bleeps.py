@@ -5,7 +5,8 @@ lasts its window halved, an audio slip moves it; set_bleep nudges, refuses an em
 and the asset's end; add_bleep takes source or timeline seconds and refuses a moment outside the clip, a quack plays its
 natural length; remove_bleep and remove_bleeps, each one undo step; clear_effects keeps the bleeps; a muted track
 silences its bleeps too; bleeps survive save and load; every built-in sound is heard, peaks at half of full scale or
-more and does not clip; the preview mixes the bleeps; bleep_words with no transcript bleeps nothing. Port of
+more and does not clip; the preview mixes the bleeps; a bleep with `mute` false leaves the clip's own sound playing
+under its beep, and set back to true it mutes it again; bleep_words with no transcript bleeps nothing. Port of
 packages/core/scripts/smoke-bleep.ts (judge/PORTING.md has the map of its sections: the profanity matcher and the
 transcript-driven sections stay with v0.2.0).
 
@@ -36,9 +37,10 @@ EXTRA_MEDIA = ("bleep.mp4",)
 TIMEOUT = 900
 FPS = 30
 RATE = 16000
-CHECKS = 58
+CHECKS = 62
 B1 = (0.94, 1.48)    # the original's two padded word windows, in source seconds
 B2 = (2.94, 3.38)
+W3 = (3.74, 4.18)    # the bleep with mute false: a window (across the 4 s step) and a volume, 0.5, no other export has
 SOUNDS = ["beep", "quack", "squeak", "boing", "honk"]
 LOUD, MUTED = 0.1, 0.008      # the source's step tones: heard / muted (it plays at 0.25)
 BEEP, NO_BEEP = 0.1, 0.005    # the beep's 1 kHz: heard / not heard
@@ -160,6 +162,7 @@ def run(t):
     sounds(t, d, A, m0)
     words(t, d, asset)
     b1, b2 = basics(t, d, A, m0)
+    unmuted(t, d, A, m0)
     follow(t, d, A, b1, b2)
     adjust(t, d, A, b1, b2, m0)
     adding(t, d, A, m0)
@@ -274,6 +277,45 @@ def basics(t, d, A, m0):
     t.check("set_bleep is one undo step (undo gives the State before it)", d.get_state() == st2,
             short_bleeps(bleeps_of(d.get_state(), A)))
     return b1, b2
+
+
+# ---------------------------------------------------------------- mute false: the clip's sound plays under the bleep
+def unmuted(t, d, A, m0):
+    """A bleep with `mute` false, at volume 0.5 (the source at 0.25 and the beep at 0.5 stay under full scale): the
+    clip's own sound keeps playing under its beep; set_bleep `mute` true mutes it again. Two undos take both back."""
+    st = d.get_state()
+
+    def mine(bid):
+        return next((x for x in bleeps_of(d.get_state(), A) if x.get("id") == bid), None)
+
+    b3 = d.add_bleep(A, start=W3[0], end=W3[1], volume=0.5, mute=False)["bleep"]
+    b = mine(b3)
+    t.check("add_bleep with mute false and volume 0.5: the State shows the bleep with mute false",
+            b is not None and b.get("mute") is False and b.get("volume") == 0.5 and window_is(b, W3),
+            f"{short_bleeps([b] if b else [])}: mute {(b or {}).get('mute')!r}, volume {(b or {}).get('volume')!r}")
+    snd = export(t, d, "unmuted")
+    name = ("export: under the bleep with mute false the clip's own sound keeps playing and the beep plays over it "
+            "(the bleeps with mute true still mute it)")
+    if isinstance(snd, str):
+        t.check(name, False, snd)
+    else:
+        amps = source_amps(snd, m0, W3[0] + 0.03, W3[1] - 0.03)
+        k = observe.tone_amp(snd, W3[0] + 0.05, W3[1] - 0.05, 1000, RATE)
+        low = min((x[3] for x in amps), default=None)
+        ok, why = bleeped(snd, m0, [B1, B2])
+        t.check(name, low is not None and low > LOUD and k > BEEP and ok,
+                f"[{W3[0]},{W3[1]}] source {'none measured' if low is None else f'{low:.3f}'} "
+                f"({'/'.join(str(x[2]) for x in amps)} Hz; over {LOUD}), 1 kHz {k:.3f} (over {BEEP}); {why}")
+    d.set_bleep(A, b3, mute=True)
+    b = mine(b3)
+    snd = export(t, d, "remuted")
+    ok, why = bleeped(snd, m0, [W3])
+    t.check("set_bleep mute true: the State shows it, and the export mutes the clip's sound under the bleep again",
+            (b or {}).get("mute") is True and ok, f"mute {(b or {}).get('mute')!r}; {why}")
+    d.undo()
+    d.undo()
+    t.check("two undos take back set_bleep and add_bleep (the State before them)", d.get_state() == st,
+            short_bleeps(bleeps_of(d.get_state(), A)))
 
 
 # ---------------------------------------------------------------- the bleeps follow the clip
