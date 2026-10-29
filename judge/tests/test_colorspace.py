@@ -442,9 +442,10 @@ def lossless(t, d, o):
                   f"each plane {limit}")
     # Crops with an odd offset or size, on a 640x360 canvas: the export against the source read whole, cut exactly
     # where the crop says (in RGB) and fitted to the canvas, each played from a frame of its own (LL_FROM). The first
-    # needs no scaling, so its reference is the source's own pixels; the others are scaled a little to fit, and the
-    # judge does not know the editor's resampling filter, so each is held to the closest of the references made with
-    # five common ones.
+    # needs no scaling, so its reference is the source's own pixels, held to the original's limits: it is the guard
+    # against a chroma plane cut half a sample off. The others are scaled a little to fit, and the judge does not know
+    # the editor's resampling filter, so each is held to the closest of the references made with five common ones,
+    # with limits wide enough for other filters and FFmpeg's default rounding (CROP_FIT_* below).
     cw, ch = 640, 360
     for (x, y, w, h), at in (((3, 5, 640, 360), None), ((2, 4, 639, 359), None), ((1001, 3, 500, 281), (780, 3))):
         fresh(d, cw, ch)
@@ -454,6 +455,8 @@ def lossless(t, d, o):
         name = o.export(f"crop-{x}-{w}", lossless=True)
         cx, cy = at or (x, y)
         scalers = ("lanczos",) if (w, h) == (cw, ch) else CROP_SCALERS
+        y99, uv99, uvmean = (1, 1, CROP_UV_MEAN) if len(scalers) == 1 else (CROP_FIT_Y_P99, CROP_FIT_UV_P99,
+                                                                            CROP_FIT_UV_MEAN)
 
         def cut(name=name, cx=cx, cy=cy, w=w, h=h, scalers=scalers, start=start):
             got = planes(o.path(name))
@@ -474,9 +477,9 @@ def lossless(t, d, o):
                   + f", played from frame {start}: the export shows the source's own pixels there (lossless; against "
                   "the source's frame cut exactly in RGB" + (")" if len(scalers) == 1 else
                                                               " and fitted, the closest of five resampling filters)"),
-                  cut, lambda v: v[0]["p99"] <= 1 and v[0]["mean"] <= CROP_Y_MEAN and v[1]["p99"] <= 1
-                  and v[1]["mean"] <= CROP_UV_MEAN, f"Y and U/V p99 <= 1, Y mean <= {CROP_Y_MEAN}, U/V mean <= "
-                  f"{CROP_UV_MEAN}")
+                  cut, lambda v, y99=y99, uv99=uv99, uvmean=uvmean: v[0]["p99"] <= y99 and v[0]["mean"] <= CROP_Y_MEAN
+                  and v[1]["p99"] <= uv99 and v[1]["mean"] <= uvmean, f"Y p99 <= {y99}, U/V p99 <= {uv99}, Y mean <= "
+                  f"{CROP_Y_MEAN}, U/V mean <= {uvmean}")
 
 
     # A fixed zoom (set_transform scale 1.5, about the middle): the export against the source read in RGB, enlarged
@@ -514,10 +517,23 @@ def lossless(t, d, o):
 # 0.015) against the closest reference (lanczos) with FFmpeg 4.4 and 9.0.2-17; the same zoom with its colour read
 # sample by sample (a blocky reading made by the judge in a probe) reads U/V p99 11 to 12 (mean 0.65 to 0.69), Y 2 to 5.
 ZOOM_Y_P99, ZOOM_UV_P99 = 2, 4
-# A chroma plane cut half a sample off (a crop made on the 4:2:0 picture itself) reads U/V p99 27 and 12 on the first
-# two crops (mean 0.73 and 0.39), and U/V mean 0.09 to 0.11 on the third; the right cut reads p99 0 and mean 0.004 to
-# 0.014 on v0.2.0's exports (judge/PORTING.md, colorspace 3b).
+# A chroma plane cut half a sample off (a crop made on the 4:2:0 picture itself) reads U/V p99 27 to 28 on the crop that
+# needs no scaling (mean 0.73 to 0.82), 8 to 12 on the 639x359 crop (mean 0.37 to 0.49), and p99 0 to 1, mean 0.09 to
+# 0.2 on the 500x281 crop; the right cut reads p99 0 and mean 0.004 to 0.014 on v0.2.0's exports (judge/PORTING.md,
+# colorspace 3b). The crop that needs no scaling keeps the original's limits (p99 1, CROP_UV_MEAN).
 CROP_UV_MEAN = 0.05
+# The two crops scaled to fit, against the closest of the five references (FFmpeg 4.4 and 9.0.2-17; judge/PORTING.md,
+# colorspace 3b, has the table): gauss, experimental and bicublin read Y p99 1 to 3, U/V p99 0 to 2 and means under
+# 0.11; the five filters with FFmpeg's default rounding (no accurate_rnd or full_chroma_int) read U/V p99 1 and U/V mean
+# 0.11 to 0.12. sinc reads Y p99 6 and U/V p99 3 but Y mean 0.22 to 0.24, neighbor Y mean 0.24 to 0.39, and zscale's
+# resize on the 639x359 crop Y mean 0.25 to 0.32 and U/V mean 0.21 to 0.23, so those still fail. Wrong cuts: one
+# column off reads Y p99 32 to 34; a size cut even, a column short on 639x359 or a row short on 500x281 reads Y p99 8 to
+# 13; a row off, or a column short on 500x281, reads Y mean 0.39 to 0.54; a row short on the 639x359 crop reads Y p99
+# 0, Y mean 0.19, U/V p99 0 and U/V mean 0.17, so only CROP_FIT_UV_MEAN catches it (0.02 over; default rounding is 0.03
+# under). The half-sample cut reads U/V p99 8 to 9 on the 639x359 crop (4 over CROP_FIT_UV_P99); on the 500x281 crop,
+# whose cut is even across, it reads U/V p99 0 to 1 and mean 0.09 to 0.2, which default rounding overlaps, so there the
+# guard rests on the other two crops.
+CROP_FIT_Y_P99, CROP_FIT_UV_P99, CROP_FIT_UV_MEAN = 6, 4, 0.15
 # The crops' Y mean against their reference: v0.2.0 and this tree read 0.0 with FFmpeg 4.4 and 9.0.2-17 (testsrc's
 # frames differ from each other by 0.4 on average, and the band's stripes by more).
 CROP_Y_MEAN = 0.2

@@ -8,8 +8,9 @@ Every picture is a fixture of make.sh (key-*.mp4: BT.601 limited range with all 
 clip on the track below, so a keyed (transparent) place shows that blue. The test samples the export where the original
 sampled its own: the mean colour of a 24x24 block (read as the export says: BT.709 limited range), with the original's
 tolerances (40 levels a channel; 60 for the red box, whose edges the chroma subsampling softens; 30 for the spill box).
-The colour `auto` resolves to is read from get_state and must be the one detect_key_colour answers, within 1 level of
-the screen's grey (a flat grey decodes exactly); the export then shows that the key removed exactly that screen.
+The colour `auto` resolves to is read from get_state and must be the one detect_key_colour answers, on the grey screen
+(within 1 level of its grey: a flat grey decodes exactly) and on the green screen (asked before its key), so a constant
+answer for the grey does not pass; the export then shows that the key removed exactly that screen.
 Whether a chroma key on that grey also removes the white and black boxes is not specified (PROTOCOL.md, "Effects"), so
 the original's check that it does stays with that script (judge/PORTING.md, key 1). Last, a keyed noisy clip exports
 the same frames each time (the second export plays it from its second frame, so the first does not pass for it): a
@@ -22,7 +23,7 @@ import observe
 
 PORT_BOUND = True
 TIMEOUT = 900
-CHECKS = 29
+CHECKS = 30
 EXTRA_MEDIA = ("key-grey.mp4", "key-blue-p.mp4", "key-blue-l.mp4", "key-green.mp4", "key-black.mp4", "key-noisy.mkv")
 
 BLUE, WHITE, BLACK, RED = (0, 0, 255), (255, 255, 255), (0, 0, 0), (255, 0, 0)
@@ -164,11 +165,14 @@ def run(t):
     d.place_clip(d.import_media(t.media("key-blue-l.mp4")), "v0", 0, 0)
     g = d.place_clip(d.import_media(t.media("key-green.mp4")), v1, 0, 0)
     lk = d.place_clip(d.import_media(t.media("key-black.mp4")), v1, 2 * FPS, 0)
+    gdet = d.detect_key_colour(g)
     gk = d.apply_effect(g, "chromakey", color="auto")
     gfx = key_effect(d, g, "chromakey")
     gc = channels((gfx or {}).get("color"))
     t.check("chromakey auto finds the screen's green: get_state shows red and blue 3 or less, green 0xFC or more",
             gc is not None and gc[0] <= 3 and gc[1] >= 0xFC and gc[2] <= 3, gfx)
+    t.check("...and it is the colour detect_key_colour answered for the green screen (asked before the key)",
+            gc is not None and gc == channels(gdet.get("color")), {"detect_key_colour": gdet, "get_state": gfx})
     d.apply_effect(lk, "lumakey", color="auto")
     lfx = key_effect(d, lk, "lumakey")
     thr = ((lfx or {}).get("params") or {}).get("threshold")

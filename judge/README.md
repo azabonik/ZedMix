@@ -682,6 +682,13 @@ What it does not defend against:
     still. The hidden cover does not show, and the render shows the clip's look. Only the colours where the still
     plays catch it: 4.0 levels off (the frozen clip inverted) against the limit of 3, where the real still reads 2,
     so the margin is 1 level each way (the same on v0.2.0 and this tree, FFmpeg 4.4 and 9.0.2-17).
+- A detection operation's answer that the adapter works out itself from the source. `detect_key_colour` is held to
+  the screen's colour as the judge reads it (test_colorspace) and to the colour that the editor's own `auto` resolves
+  to on the same clip (test_key: the grey screen and the green screen). An adapter that measures the clip's border
+  itself (FFmpeg on the source file) and answers with that, without asking the editor, passes both wherever its
+  reading is the same as the editor's `auto` (on v0.2.0, 0x808080 and 0x00FF01 for test_key's two screens). The
+  checks hold the answer to what the editor keys on, not to who worked it out. (A constant answer fails: the two
+  screens need different colours.)
 - A fork without exec made by non-Python code in the test process (a C extension calling `fork()`): Python's fork
   hook does not run, so the child keeps the result pipe and stays non-dumpable, and the sweep cannot find it.
 - A change that deletes both `judge.yml` and the gate step in `ci.yml` (which the lock does not cover). Only review
