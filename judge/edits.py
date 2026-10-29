@@ -1,7 +1,8 @@
 """What the edit tests share (tests/test_cuts.py, test_speed_ripple.py, test_speed_sync.py, test_locks.py,
-test_freeze.py, test_reverse_slowmo.py): reading clips from a State (PROTOCOL.md), the check that an edit was refused
-and changed nothing, waiting for a job, the check that a canceled or refused bake stays without effect for longer than
-a full bake takes, and the search for media files an editor left in the test's folder.
+test_freeze.py, test_reverse_slowmo.py, and the sound tests): reading clips from a State (PROTOCOL.md), the check that an
+edit was refused and changed nothing, waiting for a job, the check that a canceled or refused bake stays without effect
+for longer than a full bake takes, the search for media files an editor left in the test's folder, and the check that
+a file the editor says it made (a copy, a still, a thumbnail, a preview) is a new file of its own (snapshot, new_file).
 
 Python 3 standard library only. Every position comes from get_state, never from an operation's answer.
 """
@@ -328,3 +329,62 @@ def left_media(t, before, mine=()):
         return []
     heads = t.look(read=new)["read"]
     return [p for p in new if heads.get(p) is None or observe.media_magic(heads[p][:16])]
+
+
+# ---------------------------------------------------------------- a file the editor says it made is a new one
+def snapshot(t):
+    """Every regular file in the test's folder just before an action (edits.files: the judge's own files included),
+    as the judge sees it: {path: (device, inode, sha256)}. Taken before each action, so a file that is moved or
+    deleted after it is still known by its identity and its bytes."""
+    names = list(files(t))
+    seen = t.look(files=names, stat=names)
+    return {p: ((seen["stat"].get(p) or {}).get("dev"), (seen["stat"].get(p) or {}).get("ino"), seen["files"].get(p))
+            for p in names}
+
+
+def new_file(t, before, path, sources=()):
+    """Why `path` (a file the editor reports it made: a copy, a still, a thumbnail) is not a new file of the editor's,
+    or None when it is. `before` is snapshot(t) taken just before the action. The judge's own look decides, never the
+    path's spelling: the file, made real (links and "/./" resolved), must be a regular file in the test's folder now,
+    outside the judge's own folders (out/, in/), not at a path listed before, and not the same bytes (sha256) as any
+    file listed before, still there or not, or as the media `sources` it was made from; nor the same file (device and
+    inode) as one of the judge's own files listed before (out/, in/; still there or moved since), as the sources, or
+    as any other file listed before that is still at its path (a hard link). So a link, a hard link, a moved file of
+    the judge's or a copy of a file that was already there is not a new file. (An inode of a file the editor deleted
+    since may be given to the new file, so a gone file of the editor's own counts by its bytes only. That the file
+    holds what the action makes is judged on its pictures.)"""
+    if not isinstance(path, str) or not path:
+        return f"no file named ({path!r})"
+    real = os.path.realpath(path)
+    scratch = os.path.realpath(t.scratch)
+    if not real.startswith(scratch + os.sep):
+        return f"{path} is not in the test's folder"
+    mine = [os.path.join(scratch, m) + os.sep for m in ("out", "in")]
+    for m in mine:
+        if real.startswith(m):
+            return f"{path} is in the judge's own folder {os.path.basename(m.rstrip(os.sep))}/"
+    if real in {os.path.realpath(p) for p in before}:
+        return f"{path} was there before the action"
+    seen = t.look(files=[real], stat=[real])
+    st, digest = seen["stat"].get(real), seen["files"].get(real)
+    if not st or st.get("type") != "file" or digest is None:
+        return f"{path} is not a regular file the judge can read in the test's folder"
+    ident = (st.get("dev"), st.get("ino"))
+    known = {p: (dev, ino, sha, any(os.path.realpath(p).startswith(m) for m in mine))
+             for p, (dev, ino, sha) in before.items()}
+    for src in sources:
+        info = os.stat(src)
+        known[src] = (info.st_dev, info.st_ino, observe.sha256(src), True)
+    for p, (dev, ino, sha, strict) in known.items():
+        if sha is not None and sha == digest:
+            return f"{path} holds the same bytes as {p}, which was there before the action"
+    same = [p for p, (dev, ino, sha, strict) in known.items() if dev is not None and (dev, ino) == ident]
+    still = t.look(stat=[p for p in same if not known[p][3]])["stat"] if same else {}
+    for p in same:
+        if known[p][3] or (dev_ino(still.get(p)) == ident):
+            return f"{path} is the same file (device and inode) as {p}, which was there before the action"
+    return None
+
+
+def dev_ino(st):
+    return (st.get("dev"), st.get("ino")) if st else None

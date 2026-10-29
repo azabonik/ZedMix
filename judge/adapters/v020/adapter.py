@@ -916,8 +916,8 @@ class Adapter:
                                                  "mode": "optical-flow" if mode == "flow" else "blend"}, a)
 
     def op_render_preview(self, a):
-        self.call("render_preview", {})
-        return {}
+        j = self.call("render_preview", {})
+        return {"path": j.get("path") if isinstance(j.get("path"), str) else None}
 
     def op_apply_effect(self, a):
         args = {"clipId": arg_str(a, "clip"), "type": arg_str(a, "effect")}
@@ -1090,7 +1090,7 @@ class Adapter:
             v = (c.get("effects") or {}).get("speed", c.get("speed", 1))
             return v if isinstance(v, (int, float)) and v > 0 else 1
         overlays, effects, texts = {}, {}, {}  # clip id -> its graphics, effects and texts (get_state's clips;
-        looks = {}                            # timeline_summary does not list them), and its blend mode, mask and
+        looks, sound = {}, {}                 # timeline_summary does not list them), and its blend mode, mask and
         for t in st.get("tracks", []):        # whether it is an adjustment layer
             for c in t.get("clips", []) or []:
                 overlays[c.get("id")] = [g.get("id") for g in c.get("graphics") or [] if isinstance(g, dict)]
@@ -1106,6 +1106,15 @@ class Adapter:
                     for f in fx if isinstance(f, dict)]
                 texts[c.get("id")] = [{"id": o.get("id"), "text": o.get("text")} for o in c.get("overlays") or []
                                       if isinstance(o, dict) and isinstance(o.get("text"), str)]
+                vol = cfx.get("volume", 1)
+                sound[c.get("id")] = {
+                    "volume": vol if isinstance(vol, (int, float)) and not isinstance(vol, bool) else 1,
+                    "audio_offset_frames": c.get("audioOffsetFrames") or 0,
+                    "bleeps": [{k: b.get(k) for k in ("id", "start", "end", "sound", "volume", "mute")}
+                               for b in cfx.get("bleeps") or [] if isinstance(b, dict)],
+                    "audio_effects": [{"id": f.get("id"), "effect": f.get("type"),
+                                       "enabled": f.get("enabled") is not False, "params": dict(f.get("params") or {})}
+                                      for f in cfx.get("audioFilters") or [] if isinstance(f, dict)]}
         def transition_of(c):  # v0.2.0: {"type", "durationFrames"} on the clip it enters
             tr = c.get("transition")
             if not isinstance(tr, dict):
@@ -1126,7 +1135,9 @@ class Adapter:
                                   "effects": effects.get(c.get("clipId"), []),
                                   "texts": texts.get(c.get("clipId"), []),
                                   **looks.get(c.get("clipId"), {"blend_mode": "normal", "mask": None,
-                                                                "adjustment": c.get("adjustment") is True})})
+                                                                "adjustment": c.get("adjustment") is True}),
+                                  **sound.get(c.get("clipId"), {"volume": 1, "audio_offset_frames": 0, "bleeps": [],
+                                                                "audio_effects": []})})
                 tracks.append({"track": f"{prefix}{n}", "name": t.get("name"), "locked": bool(t.get("locked")),
                                "muted": bool(t.get("muted")), "hidden": bool(t.get("hidden")), "clips": clips})
         markers = [{"frame": m.get("frame"), "name": m.get("name")} if isinstance(m, dict) else {"frame": m, "name": None}
@@ -1230,14 +1241,20 @@ class Adapter:
         if not isinstance(a.get("query") or {}, dict):
             raise bad(f"'query' must be an object, got {a.get('query')!r}")
         query = {str(k): str(v) for k, v in (a.get("query") or {}).items()}
-        query["token"] = self.token
+        anonymous = a.get("anonymous", False)
+        if not isinstance(anonymous, bool):
+            raise bad(f"'anonymous' must be true or false, got {anonymous!r}")
+        if not anonymous:  # the editor's interface signs its requests with the core's token
+            query["token"] = self.token
         url = f"http://127.0.0.1:{self.port}{route}?{urllib.parse.urlencode(query)}"
         req = urllib.request.Request(url, method="GET")
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
                 status, ctype, body = r.status, r.headers.get("Content-Type", ""), r.read()
+                headers = {k.lower(): v for k, v in r.headers.items()}
         except urllib.error.HTTPError as e:
             status, ctype = e.code, e.headers.get("Content-Type", "") if e.headers else ""
+            headers = {k.lower(): v for k, v in e.headers.items()} if e.headers else {}
             try:
                 body = e.read()
             except OSError:
@@ -1247,7 +1264,8 @@ class Adapter:
         self.note(body[:TRANSCRIPT_CAP].decode("utf-8", "replace"))
         return {"status": status, "content_type": ctype, "body_length": len(body),
                 "body_sha256": hashlib.sha256(body).hexdigest(),
-                "body_b64": base64.b64encode(body[:BODY_CAP]).decode("ascii"), "truncated": len(body) > BODY_CAP}
+                "body_b64": base64.b64encode(body[:BODY_CAP]).decode("ascii"), "truncated": len(body) > BODY_CAP,
+                "headers": headers}
 
     def op_list_hosts(self, a):
         j = self.call("list_media_servers", {})
@@ -1479,6 +1497,128 @@ class Adapter:
             m = re.search(r"(/[^\s()\"']+\.(?:jpe?g|png|webp))", str(j.get("text") or ""))
             path = m.group(1) if m else None
         return {"path": path}
+
+    # ------------------------------------------------------------ sound: volume, slip, bleeps, audio effects (batch 4)
+    def op_set_volume(self, a):
+        self.call("set_clip_volume", {"clipId": arg_str(a, "clip"), "volume": arg_num(a, "volume")})
+        return {}
+
+    def op_set_audio_offset(self, a):
+        self.call("set_audio_offset", {"clipId": arg_str(a, "clip"), "offsetFrames": arg_int(a, "frames")})
+        return {}
+
+    @staticmethod
+    def _bleep_fields(a, args):
+        """The bleep fields the judge sent, passed on unchanged in v0.2.0's names (the editor clamps or refuses)."""
+        for k, name in (("start", "start"), ("end", "end"), ("at_seconds", "atSeconds"), ("duration", "duration"),
+                        ("volume", "volume")):
+            if a.get(k) is not None:
+                args[name] = arg_num(a, k)
+        if a.get("sound") is not None:
+            args["sound"] = arg_str(a, "sound")
+        if a.get("mute") is not None:
+            if not isinstance(a["mute"], bool):
+                raise bad(f"'mute' must be true or false, got {a['mute']!r}")
+            args["mute"] = a["mute"]
+        return args
+
+    def op_add_bleep(self, a):
+        j = self.call("add_bleep", self._bleep_fields(a, {"clipId": arg_str(a, "clip")}))
+        bid = find_key(j.get("bleep"), ["id"])
+        if not bid:
+            raise OpError("adapter_error", f"add_bleep returned no bleep id: {json.dumps(j)[:300]}")
+        return {"bleep": bid, "clip": j.get("clipId") if isinstance(j.get("clipId"), str) else arg_str(a, "clip")}
+
+    def op_set_bleep(self, a):
+        self.call("set_bleep", self._bleep_fields(a, {"clipId": arg_str(a, "clip"), "bleepId": arg_str(a, "bleep")}))
+        return {}
+
+    def op_remove_bleep(self, a):
+        self.call("remove_bleep", {"clipId": arg_str(a, "clip"), "bleepId": arg_str(a, "bleep")})
+        return {}
+
+    def op_remove_bleeps(self, a):
+        args = {}
+        if a.get("clips") is not None:
+            if not isinstance(a["clips"], list) or not all(isinstance(c, str) and c for c in a["clips"]):
+                raise bad(f"'clips' must be a list of clip ids, got {a['clips']!r}")
+            args["clipIds"] = list(a["clips"])
+        self.call("remove_bleeps", args)
+        return {}
+
+    def op_bleep_words(self, a):
+        args = {}
+        if a.get("clips") is not None:
+            if not isinstance(a["clips"], list) or not all(isinstance(c, str) and c for c in a["clips"]):
+                raise bad(f"'clips' must be a list of clip ids, got {a['clips']!r}")
+            args["clipIds"] = list(a["clips"])
+        if a.get("words") is not None:
+            if not isinstance(a["words"], list) or not all(isinstance(w, str) and w for w in a["words"]):
+                raise bad(f"'words' must be a list of words, got {a['words']!r}")
+            args["words"] = list(a["words"])
+        for k, name in (("use_default_list", "useDefaultList"), ("include_mild", "includeMild"), ("dry_run", "dryRun")):
+            if a.get(k) is not None:
+                if not isinstance(a[k], bool):
+                    raise bad(f"{k!r} must be true or false, got {a[k]!r}")
+                args[name] = a[k]
+        if a.get("sound") is not None:
+            args["sound"] = arg_str(a, "sound")
+        j = self.call("bleep_words", args)
+        hits = []
+        for h in j.get("hits") or []:
+            if isinstance(h, dict):
+                hits.append({"clip": h.get("clipId"), "bleep": h.get("bleepId"), "text": h.get("text"),
+                             "start": h.get("sourceStart"), "end": h.get("sourceEnd")})
+        return {"hits": hits}
+
+    def op_get_transcript(self, a):
+        j = self.call("get_transcript", {"assetId": arg_str(a, "asset")})
+        tr = j.get("transcript", j) if isinstance(j, dict) else None
+        if not isinstance(tr, dict) or not isinstance(tr.get("words"), list):
+            return {"words": None}
+        return {"words": [{"text": w.get("text"), "start": w.get("start"), "end": w.get("end")}
+                          for w in tr["words"] if isinstance(w, dict)]}
+
+    def op_apply_audio_effect(self, a):
+        args = {"clipId": arg_str(a, "clip"), "type": arg_str(a, "effect")}
+        if a.get("params") is not None:
+            args["params"] = a["params"]  # passed on unchanged: the editor clamps, rounds or refuses each value
+        if a.get("enabled") is not None:
+            if not isinstance(a["enabled"], bool):
+                raise bad(f"'enabled' must be true or false, got {a['enabled']!r}")
+            args["enabled"] = a["enabled"]
+        eid = arg_str(a, "effect_id", required=False)
+        if eid is not None:
+            args["effectId"] = eid
+        j = self.call("apply_audio_effect", args)
+        return {"effect": j.get("effectId") if isinstance(j.get("effectId"), str) else None,
+                "clip": j.get("clipId") if isinstance(j.get("clipId"), str) else None}
+
+    def op_remove_audio_effect(self, a):
+        self.call("remove_audio_effect", {"clipId": arg_str(a, "clip"), "effectId": arg_str(a, "effect")})
+        return {}
+
+    def op_reorder_audio_effect(self, a):
+        self.call("reorder_audio_effect", {"clipId": arg_str(a, "clip"), "effectId": arg_str(a, "effect"),
+                                           "toIndex": arg_int(a, "to_index")})
+        return {}
+
+    def op_enhance_voice(self, a):
+        args = {"clipId": arg_str(a, "clip")}
+        if a.get("strength") is not None:
+            args["strength"] = arg_num(a, "strength")
+        for k, name in (("noise_reduction", "noiseReduction"), ("normalize", "normalize")):
+            if a.get(k) is not None:
+                if not isinstance(a[k], bool):
+                    raise bad(f"{k!r} must be true or false, got {a[k]!r}")
+                args[name] = a[k]
+        j = self.call("enhance_voice", args)
+        return {"effect": j.get("effectId") if isinstance(j.get("effectId"), str) else None,
+                "clip": j.get("clipId") if isinstance(j.get("clipId"), str) else None}
+
+    def op_clean_up_storage(self, a):
+        self.call("clean_up_storage", {})
+        return {}
 
     # ------------------------------------------------------------ what an agent has
     def _tools(self):
@@ -1879,6 +2019,78 @@ def self_test():
                ([{"id": "fx_1", "effect": "vignette", "enabled": True, "amount": 1.5},
                  {"id": "fx_2", "effect": "colorkey", "enabled": False, "params": {"similarity": 0.1},
                   "color": "0x808080"}], [{"id": "text_1", "text": "Hi"}]))
+        # Sound (batch 4 operations), on canned replies.
+        sent = []
+
+        def sound_reply(n, a):
+            sent.append((n, a))
+            if n == "add_bleep":
+                return {"clipId": "c2", "bleep": {"id": "bleep_1", "start": 1, "end": 1.4}}
+            if n == "bleep_words":
+                return {"hits": [{"clipId": "c2", "bleepId": "bleep_2", "text": "x", "sourceStart": 1,
+                                  "sourceEnd": 1.4, "startFrame": 30, "endFrame": 42}], "indexedAssetIds": []}
+            if n == "get_transcript":
+                return {"transcript": None}
+            if n == "render_preview":
+                return {"path": "/p/preview.mp4", "duration": 1}
+            return {"clipId": "c2", "effectId": "afx_1"}
+        ad = adapter(sound_reply)
+        r = [op(ad, "set_volume", {"clip": "c1", "volume": 0}),
+             op(ad, "set_audio_offset", {"clip": "c1", "frames": -3}),
+             op(ad, "add_bleep", {"clip": "c1", "at_seconds": 2, "duration": 0.4, "sound": "quack", "mute": False}),
+             op(ad, "set_bleep", {"clip": "c1", "bleep": "bleep_1", "start": 1, "end": 2, "volume": 0.5}),
+             op(ad, "remove_bleep", {"clip": "c1", "bleep": "bleep_1"}),
+             op(ad, "remove_bleeps", {}),
+             op(ad, "bleep_words", {"clips": ["c1"], "dry_run": True, "include_mild": True}),
+             op(ad, "get_transcript", {"asset": "a1"}),
+             op(ad, "apply_audio_effect", {"clip": "c1", "effect": "echo", "params": {"delay": 9}, "enabled": False,
+                                           "effect_id": "afx_1"}),
+             op(ad, "remove_audio_effect", {"clip": "c1", "effect": "afx_1"}),
+             op(ad, "reorder_audio_effect", {"clip": "c1", "effect": "afx_1", "to_index": 2}),
+             op(ad, "enhance_voice", {"clip": "c1", "strength": 0.4, "noise_reduction": False}),
+             op(ad, "clean_up_storage", {}),
+             op(ad, "render_preview", {})]
+        expect("the sound operations answer as PROTOCOL.md says and map to v0.2.0's tools",
+               ([x.get("result") for x in r], sent),
+               ([{}, {}, {"bleep": "bleep_1", "clip": "c2"}, {}, {}, {},
+                 {"hits": [{"clip": "c2", "bleep": "bleep_2", "text": "x", "start": 1, "end": 1.4}]}, {"words": None},
+                 {"effect": "afx_1", "clip": "c2"}, {}, {}, {"effect": "afx_1", "clip": "c2"}, {},
+                 {"path": "/p/preview.mp4"}],
+                [("set_clip_volume", {"clipId": "c1", "volume": 0}),
+                 ("set_audio_offset", {"clipId": "c1", "offsetFrames": -3}),
+                 ("add_bleep", {"clipId": "c1", "atSeconds": 2, "duration": 0.4, "sound": "quack", "mute": False}),
+                 ("set_bleep", {"clipId": "c1", "bleepId": "bleep_1", "start": 1, "end": 2, "volume": 0.5}),
+                 ("remove_bleep", {"clipId": "c1", "bleepId": "bleep_1"}),
+                 ("remove_bleeps", {}),
+                 ("bleep_words", {"clipIds": ["c1"], "includeMild": True, "dryRun": True}),
+                 ("get_transcript", {"assetId": "a1"}),
+                 ("apply_audio_effect", {"clipId": "c1", "type": "echo", "params": {"delay": 9}, "enabled": False,
+                                         "effectId": "afx_1"}),
+                 ("remove_audio_effect", {"clipId": "c1", "effectId": "afx_1"}),
+                 ("reorder_audio_effect", {"clipId": "c1", "effectId": "afx_1", "toIndex": 2}),
+                 ("enhance_voice", {"clipId": "c1", "strength": 0.4, "noiseReduction": False}),
+                 ("clean_up_storage", {}),
+                 ("render_preview", {})]))
+        expect("sound operations: a mute, a dry run or an enabled that is not a boolean is bad_request",
+               [op(adapter(sound_reply), n, a)["error"]["code"] for n, a in
+                (("add_bleep", {"clip": "c1", "mute": "no"}), ("bleep_words", {"dry_run": 1}),
+                 ("apply_audio_effect", {"clip": "c1", "effect": "echo", "enabled": "yes"}))],
+               ["bad_request"] * 3)
+
+        def sound_state(n, a):
+            if n == "timeline_summary":
+                return {"tracks": [{"kind": "video", "trackIndex": 0, "clips": [
+                    {"clipId": "c1", "assetId": "a1", "startFrame": 0, "durationFrames": 30, "sourceInFrame": 0,
+                     "sourceOutFrame": 30}]}], "canvas": {"width": 64, "height": 64, "fps": 30}, "totalFrames": 30}
+            return {"assets": [], "tracks": [{"clips": [{"id": "c1", "audioOffsetFrames": 15, "effects": {
+                "volume": 0.5, "bleeps": [{"id": "b1", "start": 1, "end": 1.4, "sound": "beep", "volume": 0.8,
+                                           "mute": True, "word": "x"}],
+                "audioFilters": [{"id": "afx_1", "type": "echo", "params": {"delay": 300}, "enabled": False}]}}]}]}
+        c = op(adapter(sound_state), "get_state", {})["result"]["tracks"][0]["clips"][0]
+        expect("get_state: each clip's volume, sound slide, bleeps and audio effects",
+               (c["volume"], c["audio_offset_frames"], c["bleeps"], c["audio_effects"]),
+               (0.5, 15, [{"id": "b1", "start": 1, "end": 1.4, "sound": "beep", "volume": 0.8, "mute": True}],
+                [{"id": "afx_1", "effect": "echo", "enabled": False, "params": {"delay": 300}}]))
         # Edits, speed and time effects (batch 3a operations), on canned replies.
         sent = []
         tracks3 = [{"kind": "video", "trackIndex": 0}, {"kind": "audio", "trackIndex": 1},
@@ -1920,7 +2132,8 @@ def self_test():
         results = [op(ad, n, a).get("result") for n, a in calls]
         expect("insert_clip ... render_preview: the batch 3a operations answer as PROTOCOL.md says",
                results, [{"clip": "clip_ins"}] + [{}] * 12 + [{"still": "clip_still"}, {"job": "job_9"},
-                                                               {"job": None}, {"job": "job_9"}, {"job": None}, {}])
+                                                               {"job": None}, {"job": "job_9"}, {"job": None},
+                                                               {"path": None}])
         tools = [x for x in sent if x[0] != "timeline_summary"]
         expect("...and map to v0.2.0's tools (track names to trackIndex, freeze frames to seconds at the canvas's "
                "fps, flow to optical-flow, wait false to background)", tools,

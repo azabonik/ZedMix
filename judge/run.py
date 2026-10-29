@@ -160,7 +160,10 @@ OPTIONAL_MEDIA = ("idx.mp4", "idx2997.mp4", "skew.mp4", "cutout.mkv", "move.mp4"
                   # test_colorspace's sources
                   "cs-hd.mp4", "cs-709.mp4", "cs-601.mp4", "cs-sd601.mp4", "cs-sd.mp4", "cs-sd709.mp4",
                   "cs-full709.mp4", "cs-fullnm.mp4", "cs-partial.mp4", "cs-vp9.webm", "cs-rotsd.mp4", "cs-grid.png",
-                  "cs-grid.jpg", "cs-cut601.mkv", "cs-testsrc.mp4", "cs-gridll.mp4", "cs-green.mp4")
+                  "cs-grid.jpg", "cs-cut601.mkv", "cs-testsrc.mp4", "cs-gridll.mp4", "cs-green.mp4",
+                  # the sound tests' media (batch 4)
+                  "bleep.mp4", "voice.mkv", "rumble.mkv", "noise.mkv", "onset.mkv", "lay-mono.mkv", "lay-stereo.mkv",
+                  "lay-quad.mkv", "lay-51.mkv", "pk-rise.mkv", "pk-fall.mkv")
 
 
 # ---------------------------------------------------------------- no access through /proc or ptrace

@@ -779,6 +779,139 @@ def chirp_freq(source_t):
     return CHIRP_F0 + 2 * CHIRP_K * source_t
 
 
+# ---------------------------------------------------------------- sound (batch 4: bleeps, audio effects, peaks)
+def tone_amp(s, t0, t1, freq, rate=RATE):
+    """The amplitude (0..1) of a pure tone of `freq` Hz in samples `s` over [t0, t1) s (a Goertzel / DFT bin:
+    2 |X| / n); 0.0 where there are no samples."""
+    i0, i1 = max(0, int(round(t0 * rate))), min(len(s), int(round(t1 * rate)))
+    n = i1 - i0
+    if n <= 0:
+        return 0.0
+    w = 2 * math.pi * freq / rate
+    c, k = 2 * math.cos(w), 0
+    s1 = s2 = 0.0
+    for v in s[i0:i1]:
+        s1, s2 = v + c * s1 - s2, s1
+    re, im = s1 - s2 * math.cos(w), s2 * math.sin(w)
+    return 2 * math.hypot(re, im) / n
+
+
+def dominant(s, t0, t1, lo, hi, rate=RATE):
+    """The strongest frequency (Hz) between `lo` and `hi` Hz in samples `s` over [t0, t1) s: the peak of a
+    Hann-windowed DFT scanned in 1 Hz steps and then 0.1 Hz steps around the best; None where there are no samples."""
+    i0, i1 = max(0, int(round(t0 * rate))), min(len(s), int(round(t1 * rate)))
+    n = i1 - i0
+    if n <= 1:
+        return None
+    x = [v * (0.5 - 0.5 * math.cos(2 * math.pi * i / (n - 1))) for i, v in enumerate(s[i0:i1])]
+
+    def power(f):
+        w = 2 * math.pi * f / rate
+        c = 2 * math.cos(w)
+        s1 = s2 = 0.0
+        for v in x:
+            s1, s2 = v + c * s1 - s2, s1
+        return s1 * s1 + s2 * s2 - c * s1 * s2
+
+    best = max((lo + k for k in range(int(hi - lo) + 1)), key=power)
+    return max((best - 1 + k / 10 for k in range(21)), key=power)
+
+
+def band_db(s, t0, t1, lo, hi, rate=RATE, step=50):
+    """The power (dB) of samples `s` over [t0, t1) s in the band [lo, hi] Hz: the sum of the squared tone amplitudes
+    (observe.tone_amp) every `step` Hz across it, so two readings of the same band compare as levels."""
+    tot = sum(tone_amp(s, t0, t1, lo + k * step, rate) ** 2 for k in range(int((hi - lo) / step) + 1))
+    return 10 * math.log10(tot) if tot > 1e-20 else -200.0
+
+
+def residual_rms(s, t0, t1, freqs, rate=RATE):
+    """The root mean square of samples `s` over [t0, t1) s once the pure tones `freqs` (Hz) are taken out (their
+    power, amplitude^2 / 2 each, subtracted): what else is heard there."""
+    p = rms(s, t0, t1, rate) ** 2 - sum(tone_amp(s, t0, t1, f, rate) ** 2 / 2 for f in freqs)
+    return math.sqrt(max(0.0, p))
+
+
+def peak(s, t0=None, t1=None, rate=RATE):
+    """The largest |sample| of samples `s` (over [t0, t1) s when given)."""
+    i0 = 0 if t0 is None else max(0, int(round(t0 * rate)))
+    i1 = len(s) if t1 is None else min(len(s), int(round(t1 * rate)))
+    return max((abs(v) for v in s[i0:i1]), default=0.0)
+
+
+def db(x):
+    """20 log10(x), -200 for 0."""
+    return 20 * math.log10(x) if x > 1e-10 else -200.0
+
+
+def onset(s, frac=0.25, rate=RATE):
+    """The first moment (s) where |sample| reaches `frac` of the largest one, or None (silence)."""
+    top = peak(s)
+    if top <= 0:
+        return None
+    for i, v in enumerate(s):
+        if abs(v) >= top * frac:
+            return i / rate
+    return None
+
+
+def lag(x, y, t0, t1, most=0.025, rate=8000):
+    """The delay (s) of samples `y` behind samples `x` (both at `rate` Hz) that lines them up best over [t0, t1) s:
+    the peak of their cross-correlation within +-`most` s."""
+    a, n, m = int(t0 * rate), int((t1 - t0) * rate), int(most * rate)
+    xs = x[a:a + n]
+    best, best_v = 0, None
+    for d in range(-m, m + 1):
+        lo = a + d
+        if lo < 0 or lo + n > len(y):
+            continue
+        v = sum(p * q for p, q in zip(xs, y[lo:lo + n]))
+        if best_v is None or v > best_v:
+            best, best_v = d, v
+    return best / rate
+
+
+def channel_samples(path, channel, rate=RATE):
+    """One channel (0 = the first) of the first audio stream of `path` as 32-bit float samples at `rate` Hz, from
+    its start: array('f')."""
+    import array
+    import sys
+    if audio_stream(path) is None:
+        raise Unmeasurable("no audio stream")
+    with source(path) as src:
+        p = run([FFMPEG, "-nostdin", "-hide_banner", "-v", "error"] + src.words()
+                + ["-map", "0:a:0", "-af", f"pan=mono|c0=c{int(channel)}", "-ar", str(rate), "-f", "f32le", "-"],
+                fds=[src.fd], text=False)
+    if p.returncode != 0:
+        raise Unmeasurable(f"audio decode failed: {p.stderr.decode('utf-8', 'replace').strip()[-300:]}")
+    a = array.array("f")
+    a.frombytes(p.stdout[:len(p.stdout) - len(p.stdout) % 4])
+    if sys.byteorder != "little":
+        a.byteswap()
+    return a
+
+
+def loudness_peak(path):
+    """(integrated loudness in LUFS, true peak in dBTP) of the first audio stream, by the judge's own EBU R128
+    reading (ebur128 with its true-peak meter); -inf for a loudness that cannot be measured (silence)."""
+    if audio_stream(path) is None:
+        raise Unmeasurable("no audio stream")
+    with source(path) as src:
+        p = run([FFMPEG, "-nostdin", "-hide_banner", "-nostats"] + src.words()
+                + ["-map", "0:a:0", "-af", "ebur128=peak=true", "-f", "null", "-"], fds=[src.fd])
+    li = re.findall(r"I:\s*(-?[0-9.]+|-inf|nan) LUFS", p.stderr)
+    tp = re.findall(r"True peak:\s*\n?\s*Peak:\s*(-?[0-9.]+|-inf) dBFS", p.stderr)
+    if not li or not tp:
+        raise Unmeasurable(f"ebur128 failed: {p.stderr.strip()[-300:]}")
+    f = (lambda v: -math.inf if v in ("-inf", "nan") else float(v))
+    return f(li[-1]), f(tp[-1])
+
+
+def channels(path):
+    """The number of channels of the first audio stream of `path` (None: no audio stream)."""
+    a = audio_stream(path)
+    return None if a is None else int(a.get("channels") or 0)
+
+
 def media_magic(head):
     """Whether `head` (a file's first bytes) starts like a media file: MP4 / QuickTime (ftyp, moov, mdat, free, wide at
     byte 4), Matroska / WebM, PNG, JPEG, RIFF (WAV, AVI, WebP), Ogg, FLAC, MP3, NUT, MPEG-TS / PS, or an H.264 / HEVC

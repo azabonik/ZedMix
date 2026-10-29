@@ -196,7 +196,10 @@ State:
     {"track": "v0", "name": "V1", "locked": false, "muted": false, "hidden": false, "clips": [
       {"id": "...", "asset": "...", "start_frame": 0, "in_frame": 30, "out_frame": 120, "length_frames": 90,
        "speed": 1, "ramp": false, "transition": null, "graphics": [], "texts": [{"id": "...", "text": "Hello"}],
-       "effects": [{"id": "...", "effect": "vignette", "enabled": true, "amount": 1.5}]}
+       "effects": [{"id": "...", "effect": "vignette", "enabled": true, "amount": 1.5}],
+       "volume": 1, "audio_offset_frames": 0,
+       "bleeps": [{"id": "...", "start": 0.94, "end": 1.48, "sound": "beep", "volume": 0.8, "mute": true}],
+       "audio_effects": [{"id": "...", "effect": "pitch", "enabled": true, "params": {"semitones": 12}}]}
     ]}
   ],
   "markers": [{"frame": 30, "name": "early"}],
@@ -210,8 +213,10 @@ enters it (`{"kind", "frames"}`, see `set_transition`) or null. `markers` are th
 each with its `name` or null. A clip's `blend_mode` is its blend mode (`set_blend_mode`; `normal` when none was set),
 its `mask` its shape mask (`set_mask`: `{"shape", "x", "y", "w", "h", "rotation", "feather", "roundness", "invert"}`,
 the values as the editor keeps them, clamped) or null, and `adjustment` is true for an adjustment layer
-(`add_adjustment_layer`; its `asset` is null). An adapter whose State has no such field leaves it out; the tests that
-need it then fail.
+(`add_adjustment_layer`; its `asset` is null). A clip's `volume` is its sound level (`set_volume`), its
+`audio_offset_frames` how far its sound is slid against its picture (`set_audio_offset`), its `bleeps` its bleeps and
+its `audio_effects` the effects on its sound in the order they run (see "Sound" below). An adapter whose State has no
+such field leaves it out; the tests that need it then fail.
 
 ### The canvas
 
@@ -346,7 +351,7 @@ until 70 %, then up to 8x at the end). Another editor's adapter maps them to its
 | `jobs` | `{}` | `{"jobs": [Job]}`: the exports, and the copies `reverse_clip` and `smooth_slow_motion` make. |
 | `cancel` | `{"job"}` | `{"canceled": bool}`: `canceled` true when the editor accepted the cancel of the running job. The answer may come before the job's work has stopped (v0.2.0 answers once its bake has stopped), so the judge does not take it as proof: from the answer on, the job ends `canceled` in `jobs` and never turns `done`, and a canceled copy (`reverse_clip`, `smooth_slow_motion`) never changes the project or leaves a file, also later. The tests look at the State and the editor's files at once and again after one and a half times as long as a full bake of the same media takes, and 2 s more (measured on a clean bake of another span of it). |
 | `render_frame` | `{"time", "path"}` | `{"path"}`: one composited frame of the timeline at `time` seconds, written as a PNG at `path` (RGB: the colours an export shows there). A time past the end shows the last frame. |
-| `render_preview` | `{}` | `{}`: renders the editor's preview of the whole timeline, where the editor keeps it (the user's playback); `render_frame` may then be served from it, and must show the same frames. |
+| `render_preview` | `{}` | `{"path": str or null}`: renders the editor's preview of the whole timeline, where the editor keeps it (the user's playback); `render_frame` may then be served from it, and must show the same frames. `path` is the preview's file (a new file each time; readable by others, as an export is, and a format an export may have), or null when the editor does not say: its picture may be smaller than the canvas, and its sound is the timeline's mix, with the clips' bleeps and audio effects, as an export's. |
 
 Job: `{"job": id or null, "status": "running" | "done" | "error" | "canceled", "path": str or null, "error": str or
 null, "fraction": number or null}`.
@@ -358,7 +363,8 @@ null, "fraction": number or null}`.
   or `bad_request`.
 - The video is the project canvas: its width, height and fps (not the size or rate of the media placed on it), with
   square pixels. It covers the timeline from frame 0 to the State's `length_frames`.
-- There is an audio stream when any clip on the timeline has audio.
+- There is an audio stream when any clip on the timeline has audio. It is stereo, whatever the sources' channel
+  layouts (mono, stereo, quad, 5.1).
 - Colour: the video is BT.709 at limited range, and all four of its colour tags (matrix, primaries, transfer, range)
   say so, so every player shows the same colours. Each source is read as players read it: by its colour tags (a
   matrix or a range tag alone counts), and where a tag is missing, an untagged HD picture (720 lines or more, counted
@@ -374,6 +380,66 @@ null, "fraction": number or null}`.
   editor reports one, even when it left a file at the path; `done` only when the editor reports no error and the file
   is there.
 
+### Sound
+
+A clip's sound: its level, its slide against its picture, its bleeps and its audio effects. Times of bleeps are
+**seconds of the clip's source** (the asset), so a bleep stays on its word whatever happens to the clip.
+
+| op | args | result |
+|---|---|---|
+| `set_volume` | `{"clip", "volume"}` | `{}`: the clip's sound level, 1 unchanged, 0 silent. A picture at 0 whose linked sound clip plays the same footage leaves that clip to carry the sound (see `apply_audio_effect`). |
+| `set_audio_offset` | `{"clip", "frames"}` | `{}`: slides the clip's sound against its picture by `frames` (positive: later, an L-cut; negative: earlier, a J-cut; 0: back in place). Its bleeps move with the sound. |
+| `add_bleep` | `{"clip", "start"?, "end"?, "at_seconds"?, "duration"?, "sound"?, "volume"?, "mute"?}` | `{"bleep": id, "clip": id}`: one bleep: while it plays, the clip's own sound is muted (`mute`, true by default) and the bleep's sound plays (`sound`: `beep`, the default, a 1 kHz tone; `quack`, `squeak`, `boing`, `honk`; `volume` its level, 0.8 by default). Its window is `[start, end)` in source seconds, or `at_seconds` (a moment of the timeline) and `duration` (timeline seconds, 0.5 by default). A bleep belongs to its clip and follows it through every edit: a move, a trim (a window trimmed off is not heard; trimmed back, it is again), a split (each half keeps the bleeps of its own range), a speed change (the window plays faster or slower; the bleep's sound keeps its pitch and lasts the window), a sound slide, save and load. The beep lasts its window; the other sounds play their natural length (`quack` about 0.3 s) even past a shorter window. A muted track silences its bleeps too. `clear_effects` keeps the bleeps. One undo step. Errors: `product_error` for a window outside the clip (`at_seconds` past its end, for example). |
+| `set_bleep` | `{"clip", "bleep", "start"?, "end"?, "sound"?, "volume"?, "mute"?}` | `{}`: changes one bleep (only the fields sent). A window shorter than 0.04 s is made 0.04 s; one that runs past the asset's end ends there. One undo step. Errors: `product_error` for `start` at or after `end`, a bleep the clip does not have. |
+| `remove_bleep` | `{"clip", "bleep"}` | `{}`: removes one bleep; the clip's sound plays there again. One undo step. |
+| `remove_bleeps` | `{"clips"?: [id]}` | `{}`: removes every bleep of the clips (every clip when `clips` is left out). One undo step. |
+| `get_transcript` | `{"asset"}` | `{"words": [{"text", "start", "end"}] or null}`: the asset's word-level transcript (source seconds), or null when the editor has none. In a test the editor has no speech model (rule 4), so it has none unless it can make one without a download. |
+| `bleep_words` | `{"clips"?: [id], "words"?: [str], "use_default_list"?: bool, "include_mild"?: bool, "sound"?, "dry_run"?: bool}` | `{"hits": [{"clip", "bleep", "text", "start", "end"}]}`: bleeps every swear word of the clips' transcripts (a built-in list, `include_mild` adding mild words, `words` adding the user's own, `use_default_list` false using only those), each as a bleep on the clip that carries the asset's sound, its window the word's padded a little; re-running replaces the clips' bleeps; `dry_run` true only reports the hits and changes nothing. One undo step. Errors: `product_error` when a clip's asset has no transcript and none can be made (no speech model: rule 4); nothing is changed then. |
+| `clean_up_storage` | `{}` | `{}`: the user's storage clean-up, run now (the editor's own files it no longer needs are moved away; nothing the project uses). |
+
+#### Audio effects
+
+The effects on a clip's sound (`apply_audio_effect`), by the product's names, with their params' ranges. They run in
+the clip's source time, after the bleeps' mutes and before its speed: a speed change does not change an EQ's frequency
+or a pitch shift (a voice pitched +12 stays pitched at 2x), and a bleep's sound is never processed by them. A value
+outside a range is clamped (get_state shows the clamped value), a switch (0|1) is rounded to 0 or 1, a param the
+effect does not have and an effect the editor does not have are refused. Each effect keeps the clip's sound starting
+when it did (no delay added) and lasting the clip's length, and stops at its end (an echo's or a reverb's tail does
+not run past it). Another editor's adapter maps the names to its own.
+
+| effect | params (range) | what it does |
+|---|---|---|
+| `enhance_voice` | strength 0..1, denoise 0\|1, normalize 0\|1, floor -90..-20 (dBFS) | one-step voice polish: rumble cut, noise reduction, de-essing, EQ, gentle compression, -16 LUFS with a true peak at most -1.5 dBTP |
+| `noise_reduction` | amount 0..1, floor -90..-20, heavy 0\|1 | steady noise taken down (the floor is measured from the clip when not given) |
+| `highpass` | frequency 20..500 (Hz) | removes what is below (24 dB per octave) |
+| `lowpass` | frequency 1000..20000 | removes what is above |
+| `de_esser` | amount 0..1, frequency 0..1 | tames sibilance |
+| `gate` | threshold -80..-10 (dB), reduction 0..60 (dB), attack 0.1..100, release 10..2000 (ms) | turns the sound down between phrases |
+| `declick` | threshold 2..10 | removes clicks |
+| `eq_presence` | gain -12..12 (dB), frequency 2000..8000 | a peak around 4 kHz |
+| `eq_warmth` | gain -12..12, frequency 100..400 | a peak around 200 Hz |
+| `eq_custom` | low, mid, high -12..12 | shelves at 100 Hz and 8 kHz, a peak at 1 kHz |
+| `bass_boost` | gain 0..18, frequency 40..250 | a low shelf |
+| `compressor` | threshold -60..0, ratio 1..20, attack 0.1..200, release 10..2000, makeup 0..24 | evens loud and quiet |
+| `limiter` | ceiling -12..0 (dBFS), drive 0..24, release 1..1000 | no peak over the ceiling |
+| `normalize` | target -30..-10 (LUFS), even 0..1 | the clip's integrated loudness to the target |
+| `pitch` | semitones -12..12 | pitch shifted, speed and length kept |
+| `chipmunk` | semitones 3..12 | pitch up, formants shifted |
+| `deep` | semitones -12..-2 | pitch down, formants shifted |
+| `robot` | tone 0..2 | a monotone metallic voice |
+| `echo` | delay 50..1000 (ms), decay 0.05..0.9 | repeats |
+| `reverb` | room 0..1, mix 0..1 | reflections |
+| `telephone` | grit 0..1 | a phone's band |
+| `megaphone` | grit 0..1 | a horn's band, driven |
+| `underwater` | muffle 200..1500 (Hz), wobble 0..1 | muffled and wobbling |
+
+| op | args | result |
+|---|---|---|
+| `apply_audio_effect` | `{"clip", "effect", "params"?: {name: number}, "enabled"?: bool, "effect_id"?}` | `{"effect": id or null, "clip": id or null}`: adds the effect to the clip's sound. A new effect takes its place in the chain by kind: `enhance_voice`, then cleanup (`noise_reduction` .. `declick`), tone (the EQs, `bass_boost`), dynamics (`compressor`, `limiter`, `normalize`), then the voice changers; `reorder_audio_effect` moves one. With `effect_id` it changes that effect in place (its params replaced by those sent), and `enabled` alone (false: bypassed, kept but not heard; true: on again) changes nothing else. On a picture whose sound a linked clip carries (the picture at volume 0, `set_volume`), the effect goes on that linked clip, also through either half of a split linked pair (each picture half reaches its own sound half); `clip` is the clip that has it. One undo step. Errors: `product_error` for an effect the editor does not have or a param the effect does not have, an adjustment layer (no sound), an `effect_id` the clip does not have. |
+| `remove_audio_effect` | `{"clip", "effect"}` | `{}`: removes it (found on the clip or on the linked clip that carries its sound). One undo step. Errors: `product_error` when neither has it. |
+| `reorder_audio_effect` | `{"clip", "effect", "to_index"}` | `{}`: moves it to position `to_index` (0: runs first; past the end: last). One undo step. |
+| `enhance_voice` | `{"clip", "strength"?, "noise_reduction"?: bool, "normalize"?: bool}` | `{"effect": id or null, "clip": id or null}`: adds the clip's `enhance_voice` (strength 0.7 when not sent), or changes the one it has (only what is sent; `noise_reduction` false: no noise reduction, `normalize` false: the clip's own level, a limiter still keeps it from clipping). Goes on the linked clip that carries the sound, as `apply_audio_effect`. One undo step. |
+
 ### Projects and interchange
 
 | op | args | result |
@@ -388,7 +454,7 @@ null, "fraction": number or null}`.
 
 | op | args | result |
 |---|---|---|
-| `http_get` | `{"route", "query": {}}` | `{"status": int, "content_type": str, "body_length": int, "body_sha256": str, "body_b64": str, "truncated": bool}` |
+| `http_get` | `{"route", "query": {}, "anonymous"?: bool}` | `{"status": int, "content_type": str, "body_length": int, "body_sha256": str, "body_b64": str, "truncated": bool, "headers"?: {name: value}}`: `anonymous` true sends the request without the authentication the editor's interface adds (the tests check that it is refused). `headers` are the answer's headers, names in lower case. Errors: `bad_request` when `anonymous` is not a boolean. |
 | `list_hosts` | `{}` | `{"approved": [host], "pending": [host], "outside": [host]}`: `approved` the computers the user allowed; `pending` those that offline media or a refused path names, waiting for the user; `outside` the entries of the editor's allowed list that it did not make itself (see `add_host_outside`): not used until the user keeps them. |
 | `approve_host` | `{"host"}` | `{}`: allows media from network computer `host`, as the user does in the editor's window (Allow, or Keep for an entry listed outside). No agent tool may be able to do this. The editor stores the name in lower case; a name that cannot be a network computer is refused (`product_error`). |
 | `revoke_host` | `{"host", "only_if_outside"?}` | `{"removed": bool}`: removes `host` from the allowed computers, as the user does in the editor's window. With `only_if_outside` true it removes the entry only while it is still listed outside (the Remove of a Keep question): an entry the user kept meanwhile stays, and `removed` is false. For a host that is not in the list, `removed` is the editor's own answer (v0.2.0 answers true); the tests do not depend on it. Errors: `bad_request` when `host` is missing or `only_if_outside` is not a boolean; `product_error` when the window refuses the name (one that cannot be a network computer); `adapter_error` when the window's interface cannot be reached (on v0.2.0 the web shell did not start or did not take its key). |
@@ -404,6 +470,14 @@ signs in. Routes, by their v0.2.0 names (another editor's adapter maps each one 
 - `/frames`: decoded video frames of the file named by `query.path`: `from` (the first frame), `count`, `w`, `h` (the
   size of each frame) and `fps`. The same files as `/file` may be read.
 - `/peaks`: the audio levels (a waveform overview) of the file named by `query.path`. The same files as `/file`.
+  `query.buckets`: how many levels, a whole number 16..8192 (1600 when it is left out). The answer is `4 x buckets`
+  bytes, `application/octet-stream`, with `Access-Control-Allow-Origin: *` (the editor's window reads it from any
+  origin): one little-endian float32 per bucket, in time order. The file's first channel's samples (n of them) are cut
+  into `buckets` buckets of floor(n / buckets) samples (the samples left over at the end are not used); each value is
+  the loudest |sample| of its bucket divided by the loudest bucket's (at least 1e-6), at most 1. A file rewritten in
+  place gets its new levels, also when it keeps its size. Refusals: 401 without the interface's authentication
+  (`anonymous`), 403 for a file `/file` would not serve (the answer does not repeat its path), 400 for a bucket count
+  outside 16..8192 or that is not a whole number written in decimal digits, 422 for a file with no sound.
 
 `body_b64` holds at most the first 262144 bytes of the body (`truncated` says whether there was more).
 `body_length` and `body_sha256` always describe the whole body.

@@ -340,7 +340,8 @@ class Driver:
         return self.request("smooth_slow_motion", {"clip": clip, "mode": mode, "wait": bool(wait)}).get("job")
 
     def render_preview(self):
-        """Renders the editor's preview of the whole timeline (where the editor keeps it)."""
+        """Renders the editor's preview of the whole timeline (where the editor keeps it).
+        -> {"path": the preview's file, or None when the editor does not say}"""
         return self.request("render_preview", {})
 
     def track_of(self, clip, state=None):
@@ -440,6 +441,81 @@ class Driver:
                 return t.get("clips", [])
         return []
 
+    # ------------------------------------------------------------ sound: volume, slip, bleeps, audio effects
+    def set_volume(self, clip, volume):
+        """The clip's sound level: 1 unchanged, 0 silent (PROTOCOL.md, "Sound")."""
+        return self.request("set_volume", {"clip": clip, "volume": volume})
+
+    def set_audio_offset(self, clip, frames):
+        """Slides the clip's sound against its picture by `frames` (+ later: an L-cut; - earlier: a J-cut; 0 again)."""
+        return self.request("set_audio_offset", {"clip": clip, "frames": int(frames)})
+
+    def add_bleep(self, clip, start=None, end=None, at_seconds=None, duration=None, sound=None, volume=None,
+                  mute=None):
+        """One bleep on the clip: its window as source seconds [start, end), or as timeline seconds `at_seconds` +
+        `duration`; values are sent unchanged. -> {"bleep": id, "clip": id}"""
+        args = {"clip": clip}
+        for k, v in (("start", start), ("end", end), ("at_seconds", at_seconds), ("duration", duration),
+                     ("sound", sound), ("volume", volume), ("mute", mute)):
+            if v is not None:
+                args[k] = v
+        return self.request("add_bleep", args)
+
+    def set_bleep(self, clip, bleep, **fields):
+        """Changes one bleep of the clip: start, end (source seconds), sound, volume, mute (only those given)."""
+        return self.request("set_bleep", {"clip": clip, "bleep": bleep, **fields})
+
+    def remove_bleep(self, clip, bleep):
+        """Removes one bleep of the clip."""
+        return self.request("remove_bleep", {"clip": clip, "bleep": bleep})
+
+    def remove_bleeps(self, clips=None):
+        """Removes every bleep of the clips `clips` (every clip when None)."""
+        return self.request("remove_bleeps", {} if clips is None else {"clips": list(clips)})
+
+    def bleep_words(self, clips=None, dry_run=None, **options):
+        """Bleeps the swear words the editor's transcript holds (PROTOCOL.md, "Sound"). options: words,
+        use_default_list, include_mild, sound. -> {"hits": [{"clip", "bleep", "text", "start", "end"}]}"""
+        args = dict(options)
+        if clips is not None:
+            args["clips"] = list(clips)
+        if dry_run is not None:
+            args["dry_run"] = bool(dry_run)
+        return self.request("bleep_words", args)
+
+    def get_transcript(self, asset):
+        """-> [{"text", "start", "end"}] (the asset's words, source seconds), or None when it has no transcript."""
+        return self.request("get_transcript", {"asset": asset}).get("words")
+
+    def apply_audio_effect(self, clip, effect, params=None, enabled=None, effect_id=None):
+        """Adds an audio effect (by product name, PROTOCOL.md "Audio effects") to the clip's sound, or with effect_id
+        changes that one. -> {"effect": id or None, "clip": the clip that carries it}"""
+        args = {"clip": clip, "effect": effect}
+        for k, v in (("params", params), ("enabled", enabled), ("effect_id", effect_id)):
+            if v is not None:
+                args[k] = v
+        return self.request("apply_audio_effect", args)
+
+    def remove_audio_effect(self, clip, effect):
+        """Removes the audio effect `effect` (an id) from the clip's sound."""
+        return self.request("remove_audio_effect", {"clip": clip, "effect": effect})
+
+    def reorder_audio_effect(self, clip, effect, to_index):
+        """Moves the audio effect to position `to_index` (0 = first) of the clip's sound's effects."""
+        return self.request("reorder_audio_effect", {"clip": clip, "effect": effect, "to_index": int(to_index)})
+
+    def enhance_voice(self, clip, strength=None, noise_reduction=None, normalize=None):
+        """The one-step voice polish: adds it, or changes the clip's one. -> {"effect", "clip"}"""
+        args = {"clip": clip}
+        for k, v in (("strength", strength), ("noise_reduction", noise_reduction), ("normalize", normalize)):
+            if v is not None:
+                args[k] = v
+        return self.request("enhance_voice", args)
+
+    def clean_up_storage(self):
+        """The user's storage clean-up, run now."""
+        return self.request("clean_up_storage", {})
+
     # ------------------------------------------------------------ output and jobs
     def export(self, path, wait=True, timeout=EXPORT_TIMEOUT, raw=False, lossless=False):
         """Exports the timeline to `path` (lossless: the user's lossless quality, PROTOCOL.md "Exports").
@@ -483,10 +559,14 @@ class Driver:
         return self.request("import_otio", {"path": path if raw else path_arg(path)})
 
     # ------------------------------------------------------------ file surface and network computers
-    def http_get(self, route, query=None):
-        """GET on the editor's file surface (PROTOCOL.md, http_get). -> {"status", "content_type", "body_length",
-        "body_sha256", "body" (bytes, at most the first 256 KiB), "truncated"}"""
-        r = dict(self.request("http_get", {"route": route, "query": query or {}}))
+    def http_get(self, route, query=None, anonymous=False):
+        """GET on the editor's file surface (PROTOCOL.md, http_get); anonymous: without the authentication the
+        editor's interface uses. -> {"status", "content_type", "body_length", "body_sha256", "body" (bytes, at most
+        the first 256 KiB), "truncated", "headers" (lower-case names, when the adapter gives them)}"""
+        args = {"route": route, "query": query or {}}
+        if anonymous:
+            args["anonymous"] = True
+        r = dict(self.request("http_get", args))
         r["body"] = base64.b64decode(r.pop("body_b64", "") or "")
         return r
 

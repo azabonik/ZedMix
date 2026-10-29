@@ -324,8 +324,13 @@ runner's, and a link it planted to a file of the runner's must be followed by ne
 | `PROTOCOL.md` | The adapter protocol: JSON lines on stdin and stdout, the operations, the rules for adapters. |
 | `driver.py` | The judge's side of the protocol. Tests call its methods (`import_media`, `place_clip`, `export`, ...). |
 | `adapters/v020/adapter.py` | The adapter for v0.2.0's interfaces: its MCP tools over stdio, and the core's HTTP routes. |
-| `observe.py` | The measurements: ffprobe facts, full decode, SSIM (whole frame or region), signalstats, volume, tone bands, loudness, silences, SRT and OTIO parsing: the first-try baseline checker's measurements, with the same FFmpeg filter chains. For the edit tests, the source frame index that each frame of their media shows (`frame_indexes`), the source moment their chirp is heard from (`chirp_time`), and frames compared with the one before them. For the compositing, key and colour tests, a file's colour tags (`colour_tags`), an explicit reading of a picture's matrix and range (`read_as`, so a measurement does not depend on how the judge's FFmpeg guesses), a frame as exact RGB with the mean of a block or of each cell of a grid (`Picture`), and the differences of two raw planes (`plane_diff`). Also the judge's own observations of side effects: a loopback listener that must receive nothing (or that answers a token a graphic's page must not be able to read), the search of the file-system trace, the search of the network calls for a download (`net_hits`), files that must not appear, secrets that must not appear in an answer, and the text substitution that makes a hostile input from a file the editor wrote (`craft`, which also says when it cannot). |
-| `edits.py` | What the edit tests share: clips and tracks read from a State, the check that an edit was refused and changed nothing (its undo history included: redo must still bring back a step undone before it, and the next undo must take back the edit made before it), waiting for a job, the check that a canceled or refused bake has no effect later either (its clip left in place for one and a half times a measured full bake, and 2 s more), the sound's offset from the moment expected, and the search for media files an editor left in the test's folder. |
+| `observe.py` | The measurements: ffprobe facts, full decode, SSIM (whole frame or region), signalstats, volume, tone bands, loudness, silences, SRT and OTIO parsing: the first-try baseline checker's measurements, with the same FFmpeg filter chains. For the edit tests, the source frame index that each frame of their media shows (`frame_indexes`), the source moment their chirp is heard from (`chirp_time`), and frames compared with the one before them. For the compositing, key and colour tests, a file's colour tags (`colour_tags`), an explicit reading of a picture's matrix and range (`read_as`, so a measurement does not depend on how the judge's FFmpeg guesses), a frame as exact RGB with the mean of a block or of each cell of a grid (`Picture`), and the differences of two raw planes (`plane_diff`). For the sound tests, a pure tone's amplitude over a window
+(`tone_amp`), what is heard besides given tones (`residual_rms`), a tone's frequency (`dominant`), a band's power
+(`band_db`), the onset, the delay of one sound behind another (`lag`), one channel's samples (`channel_samples`) and the
+judge's own EBU R128 loudness and true peak (`loudness_peak`). Also the judge's own observations of side effects: a loopback listener that must receive nothing (or that answers a token a graphic's page must not be able to read), the search of the file-system trace, the search of the network calls for a download (`net_hits`), files that must not appear, secrets that must not appear in an answer, and the text substitution that makes a hostile input from a file the editor wrote (`craft`, which also says when it cannot). |
+| `edits.py` | What the edit tests share: clips and tracks read from a State, the check that an edit was refused and changed nothing (its undo history included: redo must still bring back a step undone before it, and the next undo must take back the edit made before it), waiting for a job, the check that a canceled or refused bake has no effect later either (its clip left in place for one and a half times a measured full bake, and 2 s more), the sound's offset from the moment expected, the search for media files an editor left in the test's folder, and the
+check that a file the editor says it made (a copy, a still, a thumbnail, a preview) is a new file of its own
+(`snapshot`, `new_file`). |
 | `check_observe.py` | Compares `observe.py` with the values that the baseline checker recorded for its oracle exports (a local tool: the oracles are not in the repository). |
 | `fixtures/make.sh` | Makes the test media: the base set, and the optional fixtures that the run's tests name (`EXTRA_MEDIA`). |
 | `fixtures/v020-otio/` | OpenTimelineIO files that the v0.2.0 release exported (`generate.py` made them with the v0.2.0 adapter, and replaced only their media folder with a token) and `manifest.json`, what each must open as, for `tests/test_v020_otio_compat.py`. `generate.py` is a tool a person runs once against the v0.2.0 release, as their own user and with no trace; CI never runs it. |
@@ -587,7 +592,11 @@ What it defends against:
   before the request). So no earlier file of the editor's, no file of the judge's (its exports, renders and media),
   no copy of another clip and no copy of any of them with bytes added, linked, moved or renamed passes the check.
   The run's own record of this is the substitution table in `PORTING.md` (batch 3b): for each file the tests read,
-  which earlier file could stand in, and why the check rejects it.
+  which earlier file could stand in, and why the check rejects it. The sound tests (batch 4) hold every export to the
+  same rule by what is heard: each source's sound says its own moment (a staircase of tones, a tone that starts at
+  1 s) and each export plays a set of bleeps, a placement, a level, an effect or a speed that no earlier export of
+  the test plays (`PORTING.md`, batch 4); the preview is asked for after a change that no export shows, and must be
+  a new file of the editor's.
 - **A file format that defeats the crafted inputs**: a rewrite whose saved files do not hold the values as given
   turns the checks on crafted inputs into not applicable, each listed by name and counted on the `JUDGE` line, never
   into passes; `--strict` fails them.
@@ -667,7 +676,7 @@ What it does not defend against:
     again. The copy of the trace (`<test>.adapter-strace.log`) is a file the editor can change; no check reads it.
 - An adapter that makes a file with the right content itself: one that runs its own encoder on the media, or that
   rebuilds the file from other operations of the editor (a render of the source alone on a timeline of its own, a
-  trim of an earlier export) passes for the operation the test asked for. The checks hold each file to what the
+  trim of an earlier export, an export of the timeline handed in as its preview) passes for the operation the test asked for. The checks hold each file to what the
   operation makes, not to who made it; what the judge rules out is that a file that already exists stands in (see
   "An adapter that hands in another file" above). A check that two files of one project are the same (an export or a
   render before a save and after a load) cannot tell a copy of the first from a true second one: there the State and
@@ -682,6 +691,14 @@ What it does not defend against:
     still. The hidden cover does not show, and the render shows the clip's look. Only the colours where the still
     plays catch it: 4.0 levels off (the frozen clip inverted) against the limit of 3, where the real still reads 2,
     so the margin is 1 level each way (the same on v0.2.0 and this tree, FFmpeg 4.4 and 9.0.2-17).
+- The waveform overview (`/peaks`) worked out by the adapter itself: the judge reads the levels through `http_get`,
+  which the adapter makes, so an adapter that decodes the file with its own FFmpeg and answers with the right levels
+  (and the right refusals, which depend only on what was imported and on the request) passes `test_peaks` without the
+  editor. The checks hold the answer to what the file holds, not to who worked it out.
+- `bleep_words` is judged only where it must do nothing: the judge has no speech recording and the editor no speech
+  model in a test (PROTOCOL.md rule 4), so the editor has no transcript and must refuse, or find no word, and change
+  nothing. An adapter that refuses it without asking the editor passes that check. Grading the bleeps it makes needs a
+  speech fixture and a pinned model that the judge installs (as it installs the graphics add-on): an open decision.
 - A detection operation's answer that the adapter works out itself from the source. `detect_key_colour` is held to
   the screen's colour as the judge reads it (test_colorspace) and to the colour that the editor's own `auto` resolves
   to on the same clip (test_key: the grey screen and the green screen). An adapter that measures the clip's border

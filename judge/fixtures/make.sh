@@ -79,6 +79,20 @@
 #   cs-testsrc.mp4 [15] testsrc 1280x720 0.4 s (12 frames) BT.709 limited, all four tags   H.264 lossless (qp 0)
 #   cs-gridll.mp4  the grid 1280x720 0.4 s BT.709 limited, all four tags   H.264 lossless (qp 0)
 #   cs-green.mp4   1280x720 0.4 s, 1EC83C with a C83C32 rectangle in its middle 40 %, BT.709 limited, untagged
+# The sound tests' media (test_bleeps, test_audio_effects, test_voice, test_audio_layouts, test_peaks):
+#   bleep.mp4    grey 320x180 30 fps 8 s; its sound is a staircase tone that says its source moment: 300 + 30 k Hz for
+#                k = floor(2 t) (0.5 s steps, 300 Hz at 0 s to 750 Hz at 7.5 s), amplitude 0.25   AAC 48 kHz 192 kb/s
+#   voice.mkv    a voice-like sound, 12 s: 24 harmonics of an intoning ~125 Hz pitch weighted by vowel formants at 600,
+#                1500 and 2600 Hz, on a 4 Hz syllable rhythm, in three phrases (1-4.5 s at 0 dB, 6-8 s at +12 dB,
+#                9.5-11.5 s at -12 dB; 50 ms edges); a pink noise floor at -50 dB; 80 ms "s" bursts (high-passed
+#                noise) at 2.05, 3.05 and 4.05 s. Grey 160x90 picture; mono PCM 48 kHz
+#   rumble.mkv   40 Hz at -16 dB and 1 kHz at -20 dB (amplitudes), 4 s      noise.mkv   pink noise, -24 dB RMS, 4 s
+#   onset.mkv    silence for 1 s, then 440 Hz at -12 dB to 4 s
+#   lay-mono.mkv, lay-stereo.mkv, lay-quad.mkv, lay-51.mkv   440 Hz at -12 dB in each channel of that layout, 3 s
+#                (these four and the three above: grey 160x90 picture, PCM 48 kHz)
+#   pk-rise.mkv  3 s of stereo PCM at 44.1 kHz, no picture: channel 0 a 2 kHz tone swelling from 0.1 to 0.5,
+#                channel 1 a steady 1 kHz tone at 0.9
+#   pk-fall.mkv  the same, channel 0 a 3 kHz tone falling from 0.5 to 0.05 (the same size in bytes as pk-rise.mkv)
 # The tones are at amplitude 1/8 (peak about -18 dBFS). The frame rate is the source's (rate=30), never -r.
 # Then checks each file it made with ffprobe (codecs, size, rate, frame count, channels) and prints what it made.
 set -euo pipefail
@@ -88,7 +102,9 @@ MK=" mk-bands.png mk-greys.png mk-blue.png mk-red.png mk-white.png mk-grey64.png
 KEY=" key-grey.mp4 key-blue-p.mp4 key-blue-l.mp4 key-green.mp4 key-black.mp4 key-noisy.mkv "
 CS=" cs-hd.mp4 cs-709.mp4 cs-601.mp4 cs-sd601.mp4 cs-sd.mp4 cs-sd709.mp4 cs-full709.mp4 cs-fullnm.mp4 cs-partial.mp4"
 CS="$CS cs-vp9.webm cs-rotsd.mp4 cs-grid.png cs-grid.jpg cs-cut601.mkv cs-testsrc.mp4 cs-gridll.mp4 cs-green.mp4 "
-OPTIONAL=" idx.mp4 idx2997.mp4 skew.mp4 cutout.mkv move.mp4 tone300.m4a chirp.m4a long.mp4$MK${KEY# }${CS# }"
+SND=" bleep.mp4 voice.mkv rumble.mkv noise.mkv onset.mkv lay-mono.mkv lay-stereo.mkv lay-quad.mkv lay-51.mkv pk-rise.mkv"
+SND="$SND pk-fall.mkv "
+OPTIONAL=" idx.mp4 idx2997.mp4 skew.mp4 cutout.mkv move.mp4 tone300.m4a chirp.m4a long.mp4$MK${KEY# }${CS# }${SND# }"
 WANT=" "
 for n in "$@"; do
   case "$OPTIONAL" in
@@ -341,6 +357,60 @@ if want cs-green.mp4; then
     -t 0.4 -c:v libx264 -preset medium -crf 4 -pix_fmt yuv420p "$OUT/cs-green.mp4"
 fi
 
+# ---- the sound tests' media (see the top)
+if want bleep.mp4; then
+  # the staircase's phase: 2 pi times the integral of 300 + 30 floor(2 t), which is 300 t + 30 (k t - k (k + 1) / 4)
+  "$FF" -nostdin -hide_banner -loglevel error -y -f lavfi -i "color=c=gray:s=320x180:r=30:d=8" \
+    -f lavfi -i "aevalsrc=exprs='0.25*sin(2*PI*(300*t+30*(floor(2*t)*t-floor(2*t)*(floor(2*t)+1)/4)))':sample_rate=48000:duration=8" \
+    -map 0:v -map 1:a -c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k -ac 1 -ar 48000 \
+    "$OUT/bleep.mp4"
+fi
+if want voice.mkv; then
+  PH="(125*t-15/PI*cos(PI*t)-8/(6.2*PI)*cos(6.2*PI*t))"  # the phase of 125 + 15 sin(pi t) + 8 sin(6.2 pi t) Hz
+  HARM=$(awk -v ph="$PH" 'BEGIN { e = ""; for (k = 1; k <= 24; k++) { f = k * 125;
+    g = exp(-0.5 * ((f - 600) / 110) ^ 2) + 0.6 * exp(-0.5 * ((f - 1500) / 160) ^ 2) + 0.3 * exp(-0.5 * ((f - 2600) / 220) ^ 2) + 0.015;
+    e = e sprintf("%s%.5f*sin(%d*2*PI*%s)", (k > 1 ? "+" : ""), g / k ^ 0.3, k, ph) }; print e }')
+  phrase() { printf 'between(t\\,%s\\,%s)*%s*min(1\\,min((t-%s)/0.05\\,(%s-t)/0.05))' "$1" "$2" "$3" "$1" "$2"; }
+  GATE="($(phrase 1 4.5 1)+$(phrase 6 8 3.981)+$(phrase 9.5 11.5 0.2512))"
+  SYL="(0.35+0.65*pow(0.5-0.5*cos(8*PI*t)\\,0.7))"
+  burst() { printf 'between(t\\,%s\\,%s)*sin(PI*(t-%s)/0.08)' "$1" "$(awk -v a="$1" 'BEGIN { print a + 0.08 }')" "$1"; }
+  BURSTS="($(burst 2.05)+$(burst 3.05)+$(burst 4.05))"
+  MONO="aformat=sample_fmts=dbl:channel_layouts=mono"
+  "$FF" -nostdin -hide_banner -loglevel error -y -f lavfi -i "color=c=gray:s=160x90:r=30:d=12" -filter_complex \
+    "aevalsrc=exprs='0.09*($HARM)*$SYL*$GATE':sample_rate=48000:duration=12,$MONO[v];anoisesrc=color=pink:amplitude=1:seed=3:sample_rate=48000:duration=12,volume=0.0158,$MONO[n];aevalsrc=exprs='(random(0)*2-1)*$BURSTS':sample_rate=48000:duration=12,highpass=f=4000,highpass=f=4000,volume=0.25,$MONO[s];[v][n][s]amerge=inputs=3,pan=mono|c0=c0+c1+c2[a]" \
+    -map 0:v -map "[a]" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a pcm_s16le -ar 48000 -ac 1 \
+    "$OUT/voice.mkv"
+fi
+# snd <file> <seconds> <lavfi audio source>: a grey 160x90 picture with that sound, mono PCM 48 kHz, MKV
+snd() {
+  "$FF" -nostdin -hide_banner -loglevel error -y -f lavfi -i "color=c=gray:s=160x90:r=30:d=$2" -f lavfi -i "$3" \
+    -map 0:v -map 1:a -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a pcm_s16le -ar 48000 -ac 1 -t "$2" "$OUT/$1"
+}
+if want rumble.mkv; then
+  snd rumble.mkv 4 "aevalsrc=exprs='0.1585*sin(2*PI*40*t)+0.1*sin(2*PI*1000*t)':sample_rate=48000:duration=4"
+fi
+if want noise.mkv; then snd noise.mkv 4 "anoisesrc=color=pink:amplitude=1:seed=5:sample_rate=48000:duration=4,volume=0.316"; fi
+if want onset.mkv; then
+  snd onset.mkv 4 "aevalsrc=exprs='gte(t\,1)*0.2512*sin(2*PI*440*(t-1))':sample_rate=48000:duration=4"
+fi
+# layout <file> <channel layout>: a 440 Hz tone at -12 dB in each channel of the layout, 3 s, PCM 48 kHz
+layout() {
+  "$FF" -nostdin -hide_banner -loglevel error -y -f lavfi -i "color=c=gray:s=160x90:r=30:d=3" \
+    -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=3" -af "volume=2,aformat=channel_layouts=$2" \
+    -map 0:v -map 1:a -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a pcm_s16le -t 3 "$OUT/$1"
+}
+if want lay-mono.mkv; then layout lay-mono.mkv mono; fi
+if want lay-stereo.mkv; then layout lay-stereo.mkv stereo; fi
+if want lay-quad.mkv; then layout lay-quad.mkv quad; fi
+if want lay-51.mkv; then layout lay-51.mkv 5.1; fi
+# peaks <file> <channel 0 expression>: 3 s of stereo PCM at 44.1 kHz, channel 1 a steady 1 kHz tone at 0.9
+peaks() {
+  "$FF" -nostdin -hide_banner -loglevel error -y \
+    -f lavfi -i "aevalsrc=exprs='$2|0.9*sin(2*PI*1000*t)':sample_rate=44100:duration=3" -c:a pcm_s16le "$OUT/$1"
+}
+if want pk-rise.mkv; then peaks pk-rise.mkv "(0.1+0.4*t/3)*sin(2*PI*2000*t)"; fi
+if want pk-fall.mkv; then peaks pk-fall.mkv "(0.5-0.15*t)*sin(2*PI*3000*t)"; fi
+
 # probe <file> <stream> <entries>: the stream's values, comma-separated, in ffprobe's order.
 probe() { "$FP" -v error -select_streams "$2" -show_entries "stream=$3" -of csv=p=0 "$OUT/$1"; }
 # expect <file> <stream> <entries> <values>
@@ -440,6 +510,24 @@ if want cs-rotsd.mp4; then
 fi
 if want cs-grid.png; then expect cs-grid.png v:0 codec_name,width,height,pix_fmt png,1280,720,rgb24; fi
 if want cs-grid.jpg; then expect cs-grid.jpg v:0 codec_name,width,height,color_range mjpeg,1280,720,pc; fi
+# the sound tests' media
+if want bleep.mp4; then
+  expect bleep.mp4 v:0 codec_name,width,height,r_frame_rate,nb_frames h264,320,180,30/1,240
+  expect bleep.mp4 a:0 codec_name,sample_rate,channels aac,48000,1
+fi
+for f in voice.mkv:1 rumble.mkv:1 noise.mkv:1 onset.mkv:1 lay-mono.mkv:1 lay-stereo.mkv:2 lay-quad.mkv:4 lay-51.mkv:6; do
+  IFS=: read -r n ch <<< "$f"
+  if want "$n"; then expect "$n" a:0 codec_name,sample_rate,channels "pcm_s16le,48000,$ch"; fi
+done
+for f in pk-rise.mkv pk-fall.mkv; do
+  if want "$f"; then
+    expect "$f" a:0 codec_name,sample_rate,channels pcm_s16le,44100,2
+    [ -z "$(probe "$f" v "codec_type")" ] || { echo "make.sh: $f has a video stream" >&2; exit 1; }
+  fi
+done
+if want pk-rise.mkv && want pk-fall.mkv && [ "$(stat -c %s "$OUT/pk-rise.mkv")" != "$(stat -c %s "$OUT/pk-fall.mkv")" ]; then
+  echo "make.sh: pk-rise.mkv and pk-fall.mkv differ in size" >&2; exit 1
+fi
 for f in a.mp4 b.mp4 c640.mp4 m.mp3 gap.m4a tiny.mp4$WANT; do
   printf '%-9s %s s, %s bytes\n' "$f" "$("$FP" -v error -show_entries format=duration -of csv=p=0 "$OUT/$f")" "$(stat -c %s "$OUT/$f")"
 done
