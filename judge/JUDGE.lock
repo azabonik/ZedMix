@@ -3,7 +3,7 @@
 # The agents that rewrite the editor must not change the judge. The gauntlet reviews a change to this file on its PR.
 56ffaefe1bb97981a6cf275e4bf8af79cd32f79b5b01e05856ad83dff279e2c4  .github/workflows/judge.yml
 824372d867ac1615c40efc3341f43818747127972db63e6a65c2a3cfcd6819be  judge/PORTING.md
-b6c96d48f3370985f2390b7f5c54d763a4122770bafca8df2b13fbeb83e52e9d  judge/PROTOCOL.md
+cc3bb52f88120af8069832ab6ee065554c48a1549340ab0fe9af8e6c253f404c  judge/PROTOCOL.md
 21f27121014b8c41f0d7a9d6324455b5ded8b45c9ce69ebb91562be8aa18d9af  judge/README.md
 1758a7988bfdc2d55f89cb505c23342cae0d43693ef75a8e52f2fe3172e1a282  judge/adapters/v020/adapter.py
 60d050f139e5972a2c91a5133b7fcb3a3f3d85e83fa91d2db23f68d812f80beb  judge/check_observe.py
