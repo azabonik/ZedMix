@@ -7,10 +7,11 @@ Media: lay-mono.mkv, lay-stereo.mkv, lay-quad.mkv, lay-51.mkv: 3 s of a 440 Hz t
 layout (fixtures/make.sh). The canvas is 160x90 at 30 fps. Each case is one clip on an empty timeline, exported in the
 background (export with wait false) and canceled when it has not finished after its deadline (60 s for the layouts,
 30 s for the speeds, the original's): a stalled export fails its check instead of hanging the test. Every export shows
-a sound that no other export of the test shows: case i places its clip at 0.2 i s, so its sound starts there (the
-first sample at 15 % of the loudest, within 30 ms) and lasts 3 s / speed (within 0.06 s) after it. Each case is also held
-to get_state (the clip has the effects, the speed and the bleep sent), since a stereo export at a heard level does not
-show that an effect ran.
+a sound that no other export of the test shows: case i places its clip at 0.2 i s, so its sound starts there (silent,
+under 0.003, from 0.15 s to 0.02 s before it; heard, over 0.01, from 0.05 s to 0.3 s after it: the noise reduction of
+enhance_voice fades in over some 40 ms on FFmpeg 4.4) and lasts 3 s / speed (within 0.06 s) after it. Each case is also
+held to get_state (the clip has the effects, the speed and the bleep sent), since a stereo export at a heard level does
+not show that an effect ran.
 
 Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
 """
@@ -83,22 +84,23 @@ def case(t, d, i, asset, fx, speed, bleep, deadline):
     except observe.Unmeasurable as e:
         return False, f"unmeasurable: {e}"
     n = len(s) / observe.RATE
-    on = observe.onset(s, 0.15)
+    before = observe.rms(s, start - 0.15, start - 0.02) if start > 0.15 else 0.0
+    after = observe.rms(s, start + 0.05, start + 0.3)
     end = start + 3 / speed
     lv = observe.db(observe.rms(s, start + 0.1, end - 0.1))
     k = observe.tone_amp(s, start + 1.05 / speed, start + 1.45 / speed, 1000) if bleep else None
     bad = []
     if ch != 2:
         bad.append(f"{ch} channels")
-    if on is None or abs(on - start) > 0.03:
-        bad.append(f"the sound starts at {on} s, not {start:.1f} s")
+    if before >= 0.003 or after <= 0.01:
+        bad.append(f"not silent before {start:.1f} s and heard after it: {before:.4f} before, {after:.4f} after")
     if abs(n - end) > 0.06:
         bad.append(f"{n:.2f} s of sound, not {end:.2f}")
     if lv <= -30:
         bad.append(f"level {lv:.1f} dBFS")
     if bleep and k <= 0.05:
         bad.append(f"1 kHz under the bleep {k:.3f}")
-    detail = (f"{ch} channels, from {on if on is None else round(on, 3)} s, {n:.2f} s, {lv:.1f} dBFS"
+    detail = (f"{ch} channels, {before:.4f} before {start:.1f} s and {after:.3f} after it, {n:.2f} s, {lv:.1f} dBFS"
               + ("" if k is None else f", the beep {k:.3f}"))
     return not bad, "; ".join(bad) or detail
 
