@@ -11,23 +11,31 @@ v0.2.0).
 
 Media (fixtures/make.sh): pk-rise.mkv, pk-fall.mkv and pk-six1.mkv to pk-six5.mkv, each 16 s of stereo PCM at
 44.1 kHz (705600 samples, a count that 16, 800 and 1600 all divide, so every way of cutting the buckets into equal
-parts gives the same buckets, and so does one at 48 kHz); channel 0 a tone whose level steps on whole seconds
+parts gives the same buckets, and so does one at 48 kHz); channel 0 a wave whose level steps on whole seconds
 (silence, then loud and quiet parts at moments of each file's own), channel 1 a steady 1 kHz tone at 0.9 (so levels
-read from the wrong channel, or from both, are flat, or not silent where channel 0 is). The files have the same size
-in bytes. tiny.mp4 has no sound. The test copies pk-rise.mkv to in/rise.mkv and imports the copy, so it can rewrite it
-in place (with pk-fall.mkv's bytes), and copies pk-fall.mkv and pk-six1..5.mkv to in/fall0.mkv .. in/fall5.mkv: six
-files each loud at a moment of its own, so an answer for one of them does not pass for another.
+read from the wrong channel, or from both, are flat, or not silent where channel 0 is). In pk-rise and pk-fall the wave
+is low: 25 and 30 Hz, rounded to a near-square shape (repair round 3), so each half-wave is longer than two buckets of
+1600 (882 and 735 samples against 441) and a bucket of the downward half holds no upward swing: levels read from the
+upward swings only, or from the downward ones, show silence on every other pair of buckets. Its near-flat top keeps a
+sample at the wave's level in every 10 ms, wherever a bucket falls. The pk-six files carry a 2.5 kHz tone. The files
+have the same size in bytes. tiny.mp4 has no sound. The test copies pk-rise.mkv to in/rise.mkv and imports the copy, so
+it can rewrite it in place (with pk-fall.mkv's bytes), and copies pk-fall.mkv and pk-six1..5.mkv to in/fall0.mkv ..
+in/fall5.mkv: six files each loud at a moment of its own, so an answer for one of them does not pass for another.
 
 The judge's reference: channel 0 of the judge's own file decoded by the judge (observe.channel_samples, 44.1 kHz), n
 samples in `buckets` buckets of n / buckets samples each, each bucket's loudest |sample|, divided by the loudest
-bucket (at least 1e-6) and kept at most 1. The level served for bucket i must be within 0.03 of the reference at a
-bucket no more than 1 + i // 200 from it: one bucket of slack, and 0.5 % of the moment for an editor that reads the
-sound at another rate or cuts whole-sample buckets from a count that does not divide (on scratch 2.9 s files the
-editor of this tree drew each step up to 1.27 % late, 19 buckets of 1600 at the last one; such a cut loses at most one
-sample per bucket, under 0.5 % for buckets of 220 samples or more). So a level drawn a bucket off at a step passes,
-while the overview shifted by two buckets or more near the start, or squeezed or stretched in time by more than about
-0.6 %, puts a level by a step 0.2 or more off (PORTING.md, "batch 4" margins). The 0.03 absorbs another decoding
-(16-bit samples / 32768); the wrong channel is off by 1.0, a mix of both by 0.66 or more.
+bucket (at least 1e-6) and kept at most 1. The level served for bucket i must lie within 0.03 of the range of the
+reference's levels at the buckets no more than 1 + i // 200 from it (from the lowest of them less 0.03 to the highest
+plus 0.03): one bucket of slack, and 0.5 % of the moment for an editor that reads the sound at another rate or cuts
+whole-sample buckets from a count that does not divide (on scratch 2.9 s files the editor of this tree drew each step
+up to 1.27 % late, 19 buckets of 1600 at the last one; such a cut loses at most one sample per bucket, under 0.5 % for
+buckets of 220 samples or more). A range, not the nearest level (repair round 3): a bucket cut across a step of the low
+wave, near its zero crossing, holds the quiet part's level and only the first samples of the loud part, so it reads a
+level between the two; the range admits that and nothing new where the level is steady. So a level drawn a bucket off
+at a step, or between its two levels, passes, while the overview shifted by two buckets or more near the start, or
+squeezed or stretched in time by more than about 0.6 %, puts a level by a step 0.2 or more off (PORTING.md, "batch 4"
+margins). The 0.03 absorbs another decoding (16-bit samples / 32768); the wrong channel is off by 1.0, a mix of both by
+0.64 or more, the upward or the downward swings alone by 1.0.
 
 Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
 """
@@ -67,13 +75,17 @@ def floats(r):
 
 
 def diff(got, want):
-    """The largest difference of a served level from the reference at a bucket no more than 1 + i // 200 from its own
-    (the slack in time: see the module's text), or None when the counts differ."""
+    """How far the served levels fall outside the reference's levels at the buckets no more than 1 + i // 200 from
+    their own (the slack in time: see the module's text): for each bucket, its distance below the lowest or above the
+    highest of those levels, and the largest of these; None when the counts differ."""
     if got is None or len(got) != len(want):
         return None
     n = len(want)
-    return max(min(abs(g - want[j]) for j in range(max(0, i - 1 - i // 200), min(n, i + 2 + i // 200)))
-               for i, g in enumerate(got))
+    out = 0.0
+    for i, g in enumerate(got):
+        near = want[max(0, i - 1 - i // 200):min(n, i + 2 + i // 200)]
+        out = max(out, min(near) - g, g - max(near))
+    return out
 
 
 def levels(d, path, buckets=None):

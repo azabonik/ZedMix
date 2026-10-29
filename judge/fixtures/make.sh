@@ -91,13 +91,17 @@
 #   lay-mono.mkv, lay-stereo.mkv, lay-quad.mkv, lay-51.mkv   440 Hz at -12 dB in each channel of that layout, 3 s
 #                (these four and the three above: grey 160x90 picture, PCM 48 kHz)
 #   pk-rise.mkv  16 s of stereo PCM at 44.1 kHz (705600 samples, a count 16, 800 and 1600 divide), no picture:
-#                channel 0 a 2 kHz tone whose level steps on whole seconds: silent to 2 s, then 0.1 to 5 s, 0.25 to
-#                9 s, 0.5 to 13 s, 0.2 to 15 s, silent to the end; channel 1 a steady 1 kHz tone at 0.9
-#   pk-fall.mkv  the same, channel 0 a 3 kHz tone: silent to 1 s, 0.5 to 4 s, 0.05 to 6 s, 0.3 to 11 s, 0.15 to
-#                the end (the same size in bytes as pk-rise.mkv)
+#                channel 0 a low 25 Hz wave, a sine rounded to a near-square shape (tanh(8 sin) / tanh(8): 5 ms or
+#                more from a zero crossing it is within 0.003 % of its level, so a cut of 10 ms, a bucket of the
+#                overview, holds a sample at its level wherever it falls), whose level steps on whole seconds:
+#                silent to 2 s, then 0.1 to 5 s, 0.25 to 9 s, 0.5 to 13 s, 0.2 to 15 s, silent to the end; channel 1
+#                a steady 1 kHz tone at 0.9. Each half-wave (882 samples) is two of the overview's 1600 buckets (441
+#                samples), so a bucket of the downward half holds no upward swing
+#   pk-fall.mkv  the same, channel 0 a 30 Hz near-square wave as above (half-wave 735 samples): silent to 1 s, 0.5
+#                to 4 s, 0.05 to 6 s, 0.3 to 11 s, 0.15 to the end (the same size in bytes as pk-rise.mkv)
 #   pk-six1.mkv ... pk-six5.mkv  the same, channel 0 a 2.5 kHz tone: silent to 1 s, then 0.1, but 0.5 from 2 + 2k
 #                to 4 + 2k s for pk-six<k> (each file loud at a moment of its own)
-# The tones are at amplitude 1/8 (peak about -18 dBFS). The frame rate is the source's (rate=30), never -r.
+# The tones are at amplitude 1/8 (peak about -18 dBFS) where no level is given. The frame rate is the source's (rate=30), never -r.
 # Then checks each file it made with ffprobe (codecs, size, rate, frame count, channels) and prints what it made.
 set -euo pipefail
 OUT="${1:?usage: make.sh <outdir> [<optional fixture> ...]}"; FF="${FFMPEG:-ffmpeg}"; FP="${FFPROBE:-ffprobe}"
@@ -407,27 +411,30 @@ if want lay-mono.mkv; then layout lay-mono.mkv mono; fi
 if want lay-stereo.mkv; then layout lay-stereo.mkv stereo; fi
 if want lay-quad.mkv; then layout lay-quad.mkv quad; fi
 if want lay-51.mkv; then layout lay-51.mkv 5.1; fi
-# steps <Hz> <level>:<from>:<to> ...: channel 0's expression, a tone at <Hz> whose level is <level> from second
-# <from> to second <to>, counted in samples (silent where no step says)
+# steps <wave> <level>:<from>:<to> ...: channel 0's expression, the wave <wave> (an expression in t, at most 1) whose
+# level is <level> from second <from> to second <to>, counted in samples (silent where no step says)
 steps() {
-  local f="$1" e="0" s
+  local w="$1" e="0" s
   shift
   for s in "$@"; do
     IFS=: read -r l a b <<< "$s"
     e="$e+$l*gte(n\\,$((a * 44100)))*lt(n\\,$((b * 44100)))"
   done
-  echo "($e)*sin(2*PI*$f*t)"
+  echo "($e)*$w"
 }
+# tone <Hz>: a sine; low <Hz>: a sine rounded to a near-square wave of the same level, tanh(8 sin) / tanh(8)
+tone() { echo "sin(2*PI*$1*t)"; }
+low() { echo "tanh(8*sin(2*PI*$1*t))/tanh(8)"; }
 # peaks <file> <channel 0 expression>: 16 s of stereo PCM at 44.1 kHz, channel 1 a steady 1 kHz tone at 0.9
 peaks() {
   "$FF" -nostdin -hide_banner -loglevel error -y \
     -f lavfi -i "aevalsrc=exprs='$2|0.9*sin(2*PI*1000*t)':sample_rate=44100:duration=16" -c:a pcm_s16le "$OUT/$1"
 }
-if want pk-rise.mkv; then peaks pk-rise.mkv "$(steps 2000 0.1:2:5 0.25:5:9 0.5:9:13 0.2:13:15)"; fi
-if want pk-fall.mkv; then peaks pk-fall.mkv "$(steps 3000 0.5:1:4 0.05:4:6 0.3:6:11 0.15:11:16)"; fi
+if want pk-rise.mkv; then peaks pk-rise.mkv "$(steps "$(low 25)" 0.1:2:5 0.25:5:9 0.5:9:13 0.2:13:15)"; fi
+if want pk-fall.mkv; then peaks pk-fall.mkv "$(steps "$(low 30)" 0.5:1:4 0.05:4:6 0.3:6:11 0.15:11:16)"; fi
 for k in 1 2 3 4 5; do
   if want "pk-six$k.mkv"; then
-    peaks "pk-six$k.mkv" "$(steps 2500 0.1:1:$((2 + 2 * k)) 0.5:$((2 + 2 * k)):$((4 + 2 * k)) 0.1:$((4 + 2 * k)):16)"
+    peaks "pk-six$k.mkv" "$(steps "$(tone 2500)" 0.1:1:$((2 + 2 * k)) 0.5:$((2 + 2 * k)):$((4 + 2 * k)) 0.1:$((4 + 2 * k)):16)"
   fi
 done
 

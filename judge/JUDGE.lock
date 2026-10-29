@@ -2,7 +2,7 @@
 # .github/workflows/judge.yml, sorted by path from the repository root (scripts/check-judge-lock.mjs).
 # The agents that rewrite the editor must not change the judge. The gauntlet reviews a change to this file on its PR.
 56ffaefe1bb97981a6cf275e4bf8af79cd32f79b5b01e05856ad83dff279e2c4  .github/workflows/judge.yml
-50f6ae39da09338890c181a469ac2b2f96ece9e3f55eee668828912f3c28db86  judge/PORTING.md
+c0b85081db11e135a4f782f73d7bc6a9ffbed48ed388f2324da7510761b89542  judge/PORTING.md
 0b858ca7c9e8487a35e48933023a56690755bb512b821413bdeb72715e381733  judge/PROTOCOL.md
 3e23f033e23a10ead2e5147c16c3b8eac0d52a961eca6351d8d86041dd62cc3a  judge/README.md
 eca422729904121a2c7b8d2f36647a5cab98bd7415fb9481f0887e427e4a7773  judge/adapters/v020/adapter.py
@@ -15,7 +15,7 @@ a068bbdcc79b8265b1dcd73686501dd439de2da393f2b107066225151c467c48  judge/driver.p
 73ca5dcda72df52321186b7515af7f7b8c69f5d08f8eb9d364a1d7ce6c17db83  judge/fixtures/graphics-addon/install.sh
 712fe356b6aa391cb4de72b05fe91e2f3bc883c019c8b7b2d6206a785613968f  judge/fixtures/graphics-addon/package-lock.json
 cdd06d668d70c1ff53f7a8e713cce296e190c4228ba0dd243c36c004315274b9  judge/fixtures/graphics-addon/package.json
-bd35924262e5237581969515b70f32242cd7c40148a7fd05fcffbf7fecd081d4  judge/fixtures/make.sh
+2dc1153f9f544fd20814529450de11a552edf2d8cd87cb586538ea099fef409f  judge/fixtures/make.sh
 77d4f4bbf411fb7beae31fea16fd46c22c3b1beb628a3fa9bd25be308cea0b2a  judge/fixtures/v020-otio/cuts.otio
 53cdfe4aa6262fda516bf64f115f48deae53283c416dab95052bbf53680afbdd  judge/fixtures/v020-otio/generate.py
 081500d9b08a0775d019b619fdc65691d8a67115782b2895e23184be740767bf  judge/fixtures/v020-otio/grades.otio
@@ -47,7 +47,7 @@ e41e328ba562c8348ceab030508452e9e5af32caccd96b9edf2b270f99cf3441  judge/tests/te
 7cd96692d90c10f7428923ab42f1e36fa68c87cdc3e354a811a75c9ad4add6df  judge/tests/test_masks.py
 cf4c5eee74789e3dd4755dd249e20f0cc4ebdaa874c0cfb04011a432423c6032  judge/tests/test_network_hosts.py
 270fc8e5a29cc2d909835bec38c81b23faedc57baf0b55c1d3625abf797af374  judge/tests/test_observe.py
-1e71b46055daa65a731e87752f8ead8f69ec3e08a23024613f3c13b34cdd65c5  judge/tests/test_peaks.py
+b39f70ee654962a43bfdd1022f04c4e7443241b5f18a8ac878bef4e4cb0639e9  judge/tests/test_peaks.py
 eb3e179f765f13aa100a52dc55e4581cd271ec6e4b7cf220597719a16ee69d87  judge/tests/test_reverse_slowmo.py
 84c67e38092eff487bfe826299d38d3f60cfb962f79959e119c74191acf86494  judge/tests/test_safepath.py
 6d2e39064cd56bc7c553e772235a63a95ee8c8fb282aad8b77ce84aace5b50fb  judge/tests/test_speed_ripple.py
