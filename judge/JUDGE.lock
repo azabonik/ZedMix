@@ -2,7 +2,7 @@
 # .github/workflows/judge.yml, sorted by path from the repository root (scripts/check-judge-lock.mjs).
 # The agents that rewrite the editor must not change the judge. The gauntlet reviews a change to this file on its PR.
 56ffaefe1bb97981a6cf275e4bf8af79cd32f79b5b01e05856ad83dff279e2c4  .github/workflows/judge.yml
-f144b4d98918f2ccaa8fc027f49c4174e615f1f861938349becbb9a59e4e07df  judge/PORTING.md
+4118c8dd355119385a8f4b632b0b28e9e4920ebefa3601d0e04079670eea3426  judge/PORTING.md
 11fecb74e8f2827118581cb03dd1504e69831fb341d679961cb813ec3704d809  judge/PROTOCOL.md
 3e23f033e23a10ead2e5147c16c3b8eac0d52a961eca6351d8d86041dd62cc3a  judge/README.md
 dc5794dc01099596813bd8e31c75532b043e86b4fa956a29890348c9d6e3789a  judge/adapters/v020/adapter.py

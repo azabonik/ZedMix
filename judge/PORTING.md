@@ -484,7 +484,8 @@ Runs: every check passes on this tree and on the v0.2.0 release, each with FFmpe
 of CI (a container as GitHub's runner: `--as-user zjudge --strict --require-trace`, strace 6.8, FFmpeg 6.1.1), where
 test_bleeps, test_audio_effects, test_voice, test_audio_layouts and test_peaks take 40, 71, 46, 35 and 17 s, and
 test_colorspace (whose new-file helpers moved to `edits.py`) passes too. The runner's self-test there takes 457 s, main's
-456 s.
+456 s. After repair round 1 the rehearsal passes test_observe, test_bleeps, test_audio_effects and test_voice again (7,
+41, 73 and 45 s), the lock gate too, and the self-test takes 464 s (main's 456 s).
 
 ### Margins (measured on this tree and v0.2.0, FFmpeg 9.0.2-17 and 4.4)
 
