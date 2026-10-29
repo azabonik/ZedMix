@@ -10,7 +10,8 @@ true colour of every patch is known; each also shows, in a band of sixteen strip
 a still) (band(), marks()). The judge reads an export as BT.709 limited range (read_as: an explicit reading, not its
 own FFmpeg's guess) and checks its tags apart (ffprobe); a patch is the mean of the 6 x 6 block at its middle (the
 original's reading), and a source read the wrong way is off by 30 to 40 levels on the saturated patches, so the
-original's limits (4 levels on an export, 6 on a rendered frame, 3 on a still, 8 on a JPEG thumbnail) tell them apart.
+original's limits (4 levels on an export, 6 on a rendered frame, 3 on a still, 8 on a JPEG thumbnail) tell them apart
+(the judge's limit on the still where it plays, inverted, is 3 too).
 
 Every file the editor is asked to make (an export, a rendered frame, a reversed or slowed copy, a still, a thumbnail)
 must show what only that request on that clip's own source at that moment makes (README.md, threat model): its
@@ -42,12 +43,18 @@ no copy of one (with bytes added or not) passes for it.
   colours, and with the span of its media it names (frames 6 to 17): a check of its own. The original's section 4 (a
   project saved before the editor recorded each file's colour description) stays v0.2.0-only: an OTIO import reads
   the media again, so it never meets such a project, and only the editor's own project format can hold one.
-- render_frame at frame 9, and after a preview render at frame 15 (5); a freeze frame's still (its own file, a new
-  one as for the copies, and where it plays: each shows the frame held, 6, of cs-hd, by the band), made while a
-  picture on the track above covers the timeline (the still is the clip's own frame, so a render of the composite
-  does not pass for it); a thumbnail at 0.4 s, frame 12, which no earlier file shows (a new file too, showing that
-  frame or the one next to it, of cs-hd, also made under the cover); and the colour found for a key (6: within 1
-  level of the screen's border as the judge reads it); a JPEG is a still (2).
+- render_frame at frame 9, and after a preview render at frame 15 (5); a freeze frame's still of a clip with an
+  invert (its own file, a new one as for the copies, showing the frame held, 6, of cs-hd, by the band, with or
+  without the clip's invert; and where it plays, where it must show that frame inverted, as the clip's look makes
+  it and the asset's own frame does not), made while a picture on the track above covers the timeline (the still is
+  the clip's own frame, so a render of the composite that leaves the cover visible does not pass for it); a
+  thumbnail at 0.4 s, frame 12, which no earlier file shows (a new file too, showing that frame or the one next to
+  it, of cs-hd, in its true colours although the clip is inverted, also made under the cover); and the colour found
+  for a key (6: within 1 level of the screen's border as the judge reads it); a JPEG is a still (2). What this
+  cannot rule out (README.md, "What it does not defend against"): a still rebuilt from other operations of the
+  editor, such as a thumbnail of the asset placed with the clip's effects copied onto it, or a render_frame made
+  with the tracks above hidden (that one reads 4 levels off where it plays, against the limit of 3, where the real
+  still reads 2: a margin of 1 level each way).
 
 Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
 """
@@ -125,10 +132,11 @@ class Outs:
             raise observe.Unmeasurable(failed)
         return path
 
-    def error(self, name, at=0.3, rect=None, chain=AS_709):
-        """(the largest error of any patch against the true colours, the worst patch), the export read with `chain`."""
+    def error(self, name, at=0.3, rect=None, chain=AS_709, want=None):
+        """(the largest error of any patch against the true colours (or `want`), the worst patch), the export read
+        with `chain`."""
         cells = observe.Picture(self.path(name), at, chain).cells(8, 4, rect)
-        return worst(cells)
+        return worst(cells, want or PATCH)
 
 
 def worst(cells, want=PATCH):
@@ -250,14 +258,14 @@ def sources(path, formats=observe.MEDIA, rect=None):
     return {n for _, n in marks(path, formats, rect)}
 
 
-def picture_error(path):
+def picture_error(path, want=None):
     """worst() of a picture the editor wrote (a still, a thumbnail), read as its format is read: a PNG as its RGB, a
-    JPEG as BT.601 full range. -> (error, worst patch, codec)"""
+    JPEG as BT.601 full range; against the true colours, or `want`. -> (error, worst patch, codec)"""
     codec = (observe.video_stream(path, observe.STILL) or {}).get("codec_name")
     chain = {"mjpeg": observe.read_as("bt601", "pc"), "png": "null"}.get(codec)
     if chain is None:
         raise observe.Unmeasurable(f"{os.path.basename(path)} is {codec}, not a JPEG or PNG picture")
-    return worst(observe.Picture(path, 0, chain, observe.STILL).cells(8, 4)) + (codec,)
+    return worst(observe.Picture(path, 0, chain, observe.STILL).cells(8, 4), want or PATCH) + (codec,)
 
 
 def turned_error(path, at):
@@ -665,13 +673,24 @@ def stills_and_frames(t, d, o):
               rendered_at("frame-preview", FRAME_AT[1]), shows(FRAME_AT[1]), f"<= 6; the band ({FRAME_AT[1]}, 1)")
     # 6. a freeze frame's still: its own file (a new picture in the editor's folders, read as its format is read, as
     # the original read it) and where it plays (render_frame at its middle); each shows the frame held (frame 6 of
-    # cs-hd, by the band), not another of the clip's or another source's. While the freeze is made, a picture on the
-    # track above (cs-green, the whole canvas) covers the whole timeline: the still is the clip's own frame (PROTOCOL:
-    # "with the clip's look"), so a frame of the composite (render_frame) does not pass for it; the cover is taken
-    # away before the still is rendered where it plays.
+    # cs-hd, by the band), not another of the clip's or another source's. The clip has a look of its own, an invert,
+    # and the still plays with it (PROTOCOL: "with the clip's look"): where it plays it shows the inverted frame (255
+    # minus each patch, and the band's stripes inverted: INVERTED), which the asset's own frame (a thumbnail) does not.
+    # The still's own file may hold the frame with the look or without it (the editor may keep the look on the still
+    # clip: v0.2.0 and this tree do), so it is judged against both and must show one of them. While the freeze is
+    # made, a picture on the track above (cs-green, the whole canvas) covers the whole timeline: the still is the
+    # clip's own frame, so a frame of the composite (render_frame) that leaves the cover visible does not pass for it;
+    # the cover is taken away before the still is rendered where it plays. Where it plays the limit is 3: v0.2.0 and
+    # this tree read 2 there (FFmpeg 4.4 and 9.0.2-17), and a render_frame of the held moment with the tracks above
+    # hidden, put in the still's place, reads 4 (README.md, "What it does not defend against": a 1-level margin).
     cover_track = d.add_track("video")
     green_asset = d.import_media(t.media("cs-green.mp4"))
     cover_clip(d, green_asset, cover_track)
+    try:
+        d.apply_effect(clip, "invert")
+        look_why = None
+    except drv.JudgeError as e:
+        look_why = f"the invert was not added to the clip: {e}"
     before = d.get_state()
     files = snapshot(t)
     d.freeze_frame(clip, HELD_FRAME, 15)
@@ -683,36 +702,44 @@ def stills_and_frames(t, d, o):
     still_why = (f"no still in the State: v0 {edits.clips(after, 'v0')}" if still is None else
                  new_file(t, files, still_path, (t.media("cs-hd.mp4"),)))
     uncover(d, cover_track)
-    if still_why is None:
+    if still_why is None and look_why is None:
         # rendered on a canvas of half the size (STILL_CANVAS), so the still's own file (the source's size) does
         # not pass for the frame where it plays
         d.set_project(width=STILL_CANVAS[0], height=STILL_CANVAS[1], fps=FPS)
         o.render("still", (still["start_frame"] + 7.5) / FPS)
         d.set_project(width=1280, height=720, fps=FPS)
     else:
-        o.out["still"] = (None, f"the still's file is not a new file of the editor's: {still_why}")
+        o.out["still"] = (None, look_why or f"the still's file is not a new file of the editor's: {still_why}")
     held = [(HELD_FRAME, NUMBER["cs-hd.mp4"])]
+    held_inverted = [inverted_mark(m) for m in held]
 
     def still_file():
         if still_why:
             raise observe.Unmeasurable(f"the still's file is not a new file of the editor's: {still_why}")
-        return picture_error(still_path) + (marks(still_path, observe.STILL),)
-    t.measure(f"a freeze frame of untagged HD at frame {HELD_FRAME}, made while a picture on the track above covers "
-              f"the timeline: its still's own file (a new picture in the editor's folders, read as its format is "
-              f"read) shows that frame of the clip alone (the band: frame {HELD_FRAME} of source 1) in the true "
-              f"colours (within 3)", still_file, lambda v: v[0] <= 3 and v[3] == held,
-              f"<= 3; the band {held}")
+        band_seen = marks(still_path, observe.STILL)
+        plain, with_look = picture_error(still_path), picture_error(still_path, INVERTED)
+        return ((plain + (band_seen, "the frame without the clip's look")) if band_seen == held else
+                (with_look + (band_seen, "the frame with the clip's look (inverted)")) if band_seen == held_inverted
+                else (min(plain[0], with_look[0]), plain[1], plain[2], band_seen, "neither"))
+    t.measure(f"a freeze frame of untagged HD at frame {HELD_FRAME} of a clip with an invert, made while a picture on "
+              f"the track above covers the timeline: its still's own file (a new picture in the editor's folders, "
+              f"read as its format is read) shows that frame of the clip alone (the band: frame {HELD_FRAME} of "
+              f"source 1), as the source shows it or with the clip's invert, within 3 of those colours",
+              still_file, lambda v: v[0] <= 3 and v[3] in (held, held_inverted),
+              f"<= 3; the band {held} (or {held_inverted}, inverted)")
     t.measure(f"...and where it plays (render_frame at its middle, the cover taken away, the canvas set to "
-              f"{STILL_CANVAS[0]}x{STILL_CANVAS[1]}): frame {HELD_FRAME} at that size, within 4",
-              lambda: o.error("still", 0, chain="null") + (marks(o.path("still")),
-                                                           observe.size(o.path("still"))[:2]),
-              lambda v: v[0] <= 4 and v[2] == held and v[3] == STILL_CANVAS, f"<= 4; the band {held}; "
-              f"{STILL_CANVAS[0]}x{STILL_CANVAS[1]}")
+              f"{STILL_CANVAS[0]}x{STILL_CANVAS[1]}): frame {HELD_FRAME} at that size with the clip's invert (the "
+              f"band inverted: {held_inverted}; 255 minus each true colour), within 3",
+              lambda: o.error("still", 0, chain="null", want=INVERTED) + (marks(o.path("still")),
+                                                                          observe.size(o.path("still"))[:2]),
+              lambda v: v[0] <= 3 and v[2] == held_inverted and v[3] == STILL_CANVAS,
+              f"<= 3; the band {held_inverted}; {STILL_CANVAS[0]}x{STILL_CANVAS[1]}")
 
     # 6. a thumbnail: read as its format is read (a JPEG as BT.601 full range); it shows the frame at its time, a
     # moment that no earlier file or render shows (frame 12 of cs-hd: the still holds 6, the renders show 9, 15 and
     # 6), made while the cover is on the track above again over the whole timeline, so a frame of the composite does
-    # not pass for it
+    # not pass for it; it is the asset's own frame, so it shows the true colours although the clip that plays the
+    # asset is inverted
     def thumb():
         cover_clip(d, green_asset, cover_track)
         mine = snapshot(t)
@@ -764,6 +791,12 @@ def stills_and_frames(t, d, o):
 # the renders show 9, 15 and the still (6).
 HELD_FRAME, FRAME_AT, THUMB_AT, THUMB_FRAMES = 6, (9, 15), 0.4, (11, 12, 13)
 STILL_CANVAS = (640, 360)  # the canvas the still is rendered on where it plays
+INVERTED = [tuple(255 - v for v in p) for p in PATCH]  # the true colours through the clip's invert
+
+
+def inverted_mark(mark):
+    """The band of a frame through an invert: each stripe flipped, so both numbers read as 255 minus themselves."""
+    return tuple(None if v is None else 255 - v for v in mark)
 
 
 def cover_clip(d, asset, track):

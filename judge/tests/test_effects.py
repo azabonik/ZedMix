@@ -1,6 +1,7 @@
 """The editor's visual effects: what apply_effect accepts, clamps and refuses, the colour a key or hold effect keeps
 (get_state's colour read as a hex colour, red first: a colour given as #rrggbb or 0xRRGGBB must come back as that
-colour, observe.hex_colour), the bypass and the order of a clip's effects (what get_state reports), and on exports
+colour, observe.hex_colour), the bypass and the order of a clip's effects (what get_state reports; the order also in
+the picture: an invert and a colour key, which do not commute, render as each order makes them), and on exports
 that every effect renders (also all stacked on one clip, with an inverting adjustment layer over it, and with the
 original's layer: a vignette and a colour key on black), keeps a smaller clip's
 letterbox transparent (the track below shows there) at its defaults and at the ends of its ranges, and that the
@@ -52,7 +53,8 @@ SPATIAL = ("blur", "pixelate", "lens")  # they spread the picture's edge: far ba
 EDGES = [e for e in EFFECTS if (EFFECTS[e].get("amount") or EFFECTS[e].get("params")) and e not in SPATIAL]
 VARIANTS = [(e, "defaults") for e in EFFECTS] + [(e, end) for e in EDGES for end in ("low", "high")]
 
-CHECKS = 1 + 26 + 3 + 2 + len(VARIANTS) + 3   # the track, the rules, the stack, the letterbox, the vignette
+# the track, the rules, the order in the picture, the stack, the letterbox, the vignette
+CHECKS = 1 + 26 + 3 + 3 + 2 + len(VARIANTS) + 3
 ADJ_DIFF = 20  # the least mean grey difference, frame by frame, an inverting adjustment layer makes over the stack
 # The least darkening of the picture's corners (mean grey, frame by frame) the vignette-and-key layer makes: v0.2.0 and
 # this tree darken them by 39.7 (FFmpeg 9.0.2-17) and 42.6 (4.4); a layer whose effects do nothing darkens them by 0.
@@ -111,6 +113,7 @@ def run(t):
             [tr.get("track") for tr in d.get_state().get("tracks", [])][:2] == ["v0", upper] and upper == "v1",
             f"add_track -> {upper!r}")
     rules(t, d)
+    order(t, d, upper)
     letterbox(t, d, upper)
     vignette(t, d)
 
@@ -205,6 +208,78 @@ def rules(t, d):
     r, w = drv.refused(lambda: d.reorder_effect(c, "fx_nope", 0))
     check("reorder_effect of an effect the clip does not have is refused", r, w)
     stack(t, d, bars)
+
+
+# ---------------------------------------------------------------- section 4: the order of a clip's effects, seen
+# The order is judged in the picture too, with two effects that do not commute: an invert and a colour key on red
+# (0xE02020, similarity 0.1) on fx-redblue.mp4 (red | blue) on v1, over fx-base.mp4 (0xE020E0) on v0. Inverted first,
+# the red half is cyan when the key looks for red, so nothing is keyed: cyan | yellow. Keyed first, the red half is
+# made transparent and the colour below shows there: 0xE020E0 | yellow. The blue half is yellow in both orders. Each
+# order is read on render_frame (and the keyed-first order on an export too), and after the undo on a canvas of half
+# the size, so the first render does not pass for the last.
+ORDER_BLOCKS = [(40, 86), (240, 86)]   # 8x8 blocks in the red and the blue half, on the 320x180 canvas
+ORDER_WANT = {"invert first": [(31, 223, 223), (223, 223, 31)], "key first": [(224, 32, 224), (223, 223, 31)]}
+ORDER_TOL = 12   # v0.2.0 and this tree read within 3 of these (FFmpeg 4.4 and 9.0.2-17); the orders differ by 190
+
+
+def order(t, d, upper):
+    clear(d)
+    d.place_clip(d.import_media(t.media("fx-base.mp4")), "v0", 0, 0, 60)
+    c = d.place_clip(d.import_media(t.media("fx-redblue.mp4")), upper, 0, 0, 60)
+    fail = None
+    try:
+        d.apply_effect(c, "invert")
+        key = d.apply_effect(c, "colorkey", color="0xE02020", params={"similarity": 0.1})
+    except drv.JudgeError as e:
+        fail, key = f"the effects were not added: {e}", None
+
+    def look(name, time, exported=False, scale=1):
+        """The colours of ORDER_BLOCKS (scaled by `scale`) in a render_frame at `time` (or an export, read there),
+        and the picture's size."""
+        if fail:
+            return fail
+        path = t.path("out", f"order-{name}.{'mp4' if exported else 'png'}")
+        try:
+            if exported:
+                job = export(d, path)
+                if job.get("status") != "done":
+                    return f"export {job}"
+            else:
+                d.render_frame(time, path)
+            at, side = (time if exported else 0), max(2, int(8 * scale))
+            seen = [observe.block_rgb(path, at, int(x * scale), int(y * scale), side) for x, y in ORDER_BLOCKS]
+            return seen, observe.size(path)[:2]
+        except (drv.JudgeError, observe.Unmeasurable) as e:
+            return f"{name}: {e}"
+
+    def shows(seen, want, size):
+        return (isinstance(seen, tuple) and seen[1] == size
+                and all(observe.colour_is(g, w, ORDER_TOL) for g, w in zip(seen[0], ORDER_WANT[want])))
+    first = look("invert-first", 0.5)
+    t.check(f"effects invert, then a colour key on red: render_frame shows the red half inverted to cyan and not "
+            f"keyed, the blue half inverted to yellow (within {ORDER_TOL} of {ORDER_WANT['invert first']})",
+            shows(first, "invert first", (W, H)), first)
+    if fail is None:
+        try:
+            d.reorder_effect(c, key, 0)
+        except drv.JudgeError as e:
+            fail = f"reorder_effect failed: {e}"
+    second, in_export = look("key-first", 0.8), look("key-first", 1.2, exported=True)
+    t.check(f"reorder_effect puts the key first: render_frame and an export show the red half keyed away (fx-base's "
+            f"0xE020E0 below shows) and the blue half yellow (within {ORDER_TOL} of {ORDER_WANT['key first']}), so the "
+            f"picture differs from the first order's in the red half",
+            shows(second, "key first", (W, H)) and shows(in_export, "key first", (W, H)),
+            {"render_frame": second, "export": in_export})
+    if fail is None:
+        try:
+            d.undo()
+            d.set_project(width=W // 2, height=H // 2)
+        except drv.JudgeError as e:
+            fail = f"the undo failed: {e}"
+    undone = look("undone", 1.5, scale=0.5)
+    t.check(f"one undo puts the invert first again in the picture: render_frame (on a {W // 2}x{H // 2} canvas) shows "
+            f"the red half cyan again", shows(undone, "invert first", (W // 2, H // 2)), undone)
+    d.set_project(width=W, height=H)
 
 
 # ---------------------------------------------------------------- section 5: every effect on one clip

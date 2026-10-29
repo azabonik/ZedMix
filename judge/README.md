@@ -580,7 +580,9 @@ What it defends against:
   length that no earlier file of the test and no file of the judge shows: two exports that would look the same by
   design play different spans or have different lengths, the thumbnail is asked for at a frame no still or render
   shows, and a still or thumbnail is made while a picture on the track above covers the timeline, so a frame of the
-  composite (`render_frame`) does not pass for the clip's own frame. And a copy, a still or a thumbnail at a path the
+  composite (`render_frame`) that leaves the cover visible does not pass for the clip's own frame; the frozen clip has
+  a look of its own (an invert) that the still must show where it plays and the asset's own frame (a thumbnail) does
+  not show. And a copy, a still or a thumbnail at a path the
   adapter reports must be a new file by the judge's own look (device, inode and bytes against every file listed
   before the request). So no earlier file of the editor's, no file of the judge's (its exports, renders and media),
   no copy of another clip and no copy of any of them with bytes added, linked, moved or renamed passes the check.
@@ -669,7 +671,17 @@ What it does not defend against:
   operation makes, not to who made it; what the judge rules out is that a file that already exists stands in (see
   "An adapter that hands in another file" above). A check that two files of one project are the same (an export or a
   render before a save and after a load) cannot tell a copy of the first from a true second one: there the State and
-  the other renders carry the check.
+  the other renders carry the check. Two such rebuilds of a freeze frame's still (test_colorspace) pass or nearly
+  pass, and are named here as limits:
+  - A thumbnail of the asset at the held moment, put in place of the editor's still with the clip's effects copied
+    onto the new clip. The editor may keep the clip's look on the still clip and hold the plain frame in the still's
+    file (v0.2.0 does), so the still's file is by design the asset's own frame, the same picture as a thumbnail;
+    where it plays the copied effects show the look as the real still does. (A stand-in placed without the clip's
+    effects fails: the frozen clip is inverted, and the still where it plays must show it inverted.)
+  - A `render_frame` of the held moment with the tracks above hidden (`set_track`), put in place of the editor's
+    still. The hidden cover does not show, and the render shows the clip's look. Only the colours where the still
+    plays catch it: 4.0 levels off (the frozen clip inverted) against the limit of 3, where the real still reads 2,
+    so the margin is 1 level each way (the same on v0.2.0 and this tree, FFmpeg 4.4 and 9.0.2-17).
 - A fork without exec made by non-Python code in the test process (a C extension calling `fork()`): Python's fork
   hook does not run, so the child keeps the result pipe and stays non-dumpable, and the sweep cannot find it.
 - A change that deletes both `judge.yml` and the gate step in `ci.yml` (which the lock does not cover). Only review
