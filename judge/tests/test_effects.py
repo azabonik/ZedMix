@@ -215,8 +215,9 @@ def rules(t, d):
 # (0xE02020, similarity 0.1) on fx-redblue.mp4 (red | blue) on v1, over fx-base.mp4 (0xE020E0) on v0. Inverted first,
 # the red half is cyan when the key looks for red, so nothing is keyed: cyan | yellow. Keyed first, the red half is
 # made transparent and the colour below shows there: 0xE020E0 | yellow. The blue half is yellow in both orders. Each
-# order is read on render_frame (and the keyed-first order on an export too), and after the undo on a canvas of half
-# the size, so the first render does not pass for the last.
+# order is read on render_frame and on an export (so an export that applies the effects in a fixed order, such as by
+# name, fails in one of the two orders), and after the undo on a canvas of half the size, on render_frame and an
+# export, so the first render does not pass for the last.
 ORDER_BLOCKS = [(40, 86), (240, 86)]   # 8x8 blocks in the red and the blue half, on the 320x180 canvas
 ORDER_WANT = {"invert first": [(31, 223, 223), (223, 223, 31)], "key first": [(224, 32, 224), (223, 223, 31)]}
 ORDER_TOL = 12   # v0.2.0 and this tree read within 3 of these (FFmpeg 4.4 and 9.0.2-17); the orders differ by 190
@@ -255,10 +256,11 @@ def order(t, d, upper):
     def shows(seen, want, size):
         return (isinstance(seen, tuple) and seen[1] == size
                 and all(observe.colour_is(g, w, ORDER_TOL) for g, w in zip(seen[0], ORDER_WANT[want])))
-    first = look("invert-first", 0.5)
-    t.check(f"effects invert, then a colour key on red: render_frame shows the red half inverted to cyan and not "
-            f"keyed, the blue half inverted to yellow (within {ORDER_TOL} of {ORDER_WANT['invert first']})",
-            shows(first, "invert first", (W, H)), first)
+    first, first_export = look("invert-first", 0.5), look("invert-first", 0.3, exported=True)
+    t.check(f"effects invert, then a colour key on red: render_frame and an export show the red half inverted to cyan "
+            f"and not keyed, the blue half inverted to yellow (within {ORDER_TOL} of {ORDER_WANT['invert first']})",
+            shows(first, "invert first", (W, H)) and shows(first_export, "invert first", (W, H)),
+            {"render_frame": first, "export": first_export})
     if fail is None:
         try:
             d.reorder_effect(c, key, 0)
@@ -276,9 +278,11 @@ def order(t, d, upper):
             d.set_project(width=W // 2, height=H // 2)
         except drv.JudgeError as e:
             fail = f"the undo failed: {e}"
-    undone = look("undone", 1.5, scale=0.5)
-    t.check(f"one undo puts the invert first again in the picture: render_frame (on a {W // 2}x{H // 2} canvas) shows "
-            f"the red half cyan again", shows(undone, "invert first", (W // 2, H // 2)), undone)
+    undone, undone_export = look("undone", 1.5, scale=0.5), look("undone", 1.7, exported=True, scale=0.5)
+    t.check(f"one undo puts the invert first again in the picture: render_frame and an export (on a {W // 2}x{H // 2} "
+            f"canvas) show the red half cyan again",
+            shows(undone, "invert first", (W // 2, H // 2)) and shows(undone_export, "invert first", (W // 2, H // 2)),
+            {"render_frame": undone, "export": undone_export})
     d.set_project(width=W, height=H)
 
 
