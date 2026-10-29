@@ -28,7 +28,7 @@ import observe
 
 PORT_BOUND = True
 TIMEOUT = 1500
-CHECKS = 35
+CHECKS = 36
 
 LUT_TEXT = "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n"
 LEGIT_COLOURS = ["#ffe14d", "#000000cc", "0xFFE14D", "yellow", "white@0.5", "black@0.55"]
@@ -45,6 +45,11 @@ TRANSFORM = {"x": 0.0321, "scale": 0.9321, "opacity": 0.8321}
 MASK = {"w": 0.8432, "h": 0.7432, "feather": 0.0432}
 KEYFRAMES = [{"frame": 0, "value": 0.9543}, {"frame": 40, "value": 0.7543}]
 RAMP = [(0, 1), (1.0, 1.75)]  # (source s, speed)
+# Section 11's second frame: the first clip alone (frame 34: after the sepia layer, frames 0 to 29, and before the
+# dissolve into the second clip at 48), whose 32 block means must match within GRADED_TOL after the load.
+# v0.2.0 and this tree render it the same (0.0) with FFmpeg 4.4 and 9.0.2-17; each colour field set back to neutral
+# alone moves a block by 2.4 (contrast) to 18 (hue), tint alone by 4.0 (this tree, FFmpeg 4.4; judge/PORTING.md, 11).
+GRADED_AT, GRADED_TOL = 34.5 / 30, 1
 
 
 def shape(st):
@@ -301,7 +306,9 @@ def body(t, canary):
     d.apply_effect(adj, "sepia")
     full = t.path("projects", "full.aive")
     f1, f2 = t.path("out", "full-1.png"), t.path("out", "full-2.png")
+    g1, g2 = t.path("out", "full-graded-1.png"), t.path("out", "full-graded-2.png")
     d.render_frame(0.5, f1)
+    d.render_frame(GRADED_AT, g1)
     before = shape(d.get_state()), looks(d.get_state())
     d.save_project(full)
     d.load_project(legit)
@@ -316,6 +323,16 @@ def body(t, canary):
     d.render_frame(0.5, f2)
     t.measure("…and renders the same frame after the load", lambda: observe.ssim(f1, f2), lambda v: v >= 0.99,
               "SSIM >= 0.99")
+    # The colour adjustments (the grade, temperature, tint, hue) where no adjustment layer covers them: the first
+    # clip alone, after the sepia layer's end and before the dissolve, as block means.
+    d.render_frame(GRADED_AT, g2)
+
+    def graded():
+        a, b = (observe.Picture(p, 0).cells(8, 4, half=8) for p in (g1, g2))
+        return round(observe.max_error(a, b), 1)
+    t.measure(f"…and the clip's colour adjustments render the same after the load where no layer covers them (frame "
+              f"{round(GRADED_AT * 30 - 0.5)}: the 32 block means of 16 x 16 px within {GRADED_TOL} in each channel)",
+              graded, lambda v: v <= GRADED_TOL, f"<= {GRADED_TOL}")
 
     # ---- 10. the same project with filter text added to every rendering value
     pwn10 = t.path("pwn", "values.txt")

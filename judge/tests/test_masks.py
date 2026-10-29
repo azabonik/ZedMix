@@ -19,6 +19,9 @@ c. A mask on a keyed clip (it multiplies the key, it does not undo it), on a cli
 d. `add` leaves the frames before the layer and the picture outside it exactly as they were; a multiply clip's white
    text stays white (only the picture blends); after the run's first clip loses its mode, a frame shown only by the
    second clip of the run composites normally (render_frame).
+e. The same mask (an ellipse, w and h 0.5) on two pictures of different sizes in one export: on the square picture it
+   is a circle, on a picture that fills the canvas a wide ellipse, each drawn for its own picture; then the canvas is
+   doubled (set_project) and the project exported again: it exports, and each shape is twice as large.
 
 Every picture is a fixture of make.sh (mk-*: exact RGB stills, and an FFV1 clip with alpha). The exports are lossless
 (PROTOCOL.md, "Exports"), so the pixels are the compositing's own values. Colours are read from an export as BT.709
@@ -31,7 +34,7 @@ import edits
 
 PORT_BOUND = True
 TIMEOUT = 1500
-CHECKS = 104
+CHECKS = 108
 EXTRA_MEDIA = ("mk-bands.png", "mk-greys.png", "mk-blue.png", "mk-red.png", "mk-white.png", "mk-grey64.png",
                "mk-redsq.png", "mk-greenbox.png", "mk-disc.mkv")
 
@@ -175,6 +178,7 @@ def run(t):
     keyframed(t, d, s, v1)
     keyed_and_alpha(t, d, s, v1)
     blend_edges(t, d, s, v1)
+    one_mask_two_pictures(t, d, s, v1)
 
 
 def at(n):
@@ -580,3 +584,44 @@ def blend_edges(t, d, s, v1):
     s.render("run-2", 3.0)
     px("run-2", *C, RED, "after the run's first clip loses its mode (clear_effects), that frame composites normally: "
        "red (render_frame)", 8, 0, 0)
+
+
+def one_mask_two_pictures(t, d, s, v1):
+    """The same ellipse (w, h 0.5) on the square red picture (frames 0 to 29: fitted 360x360, a circle of radius 90)
+    and on mk-red.png, which fills the canvas (frames 30 to 59: an ellipse 320 x 180 px across), over blue; then the
+    canvas doubled to 1280x720 and the same project exported again (a circle of radius 180, an ellipse 640 x 360). A
+    mask drawn for one picture or canvas and used for another shows the wrong shape, or the export fails."""
+    edits.clear(d)
+    d.set_project(width=W, height=H, fps=FPS)
+    d.place_clip(d.import_media(t.media("mk-blue.png")), "v0", 0, 0, 2 * FPS)
+    square = d.place_clip(d.import_media(t.media("mk-redsq.png")), v1, 0, 0, FPS)
+    wide = d.place_clip(d.import_media(t.media("mk-red.png")), v1, FPS, 0, FPS)
+    for c in (square, wide):
+        d.set_mask(c, shape="ellipse", w=0.5, h=0.5)
+    s.export("one-mask")
+    d.set_project(width=2 * W, height=2 * H)
+    s.export("one-mask-2x")
+    d.set_project(width=W, height=H)
+
+    def shape(name, k, red, blue):
+        def look():
+            f = s.pic(name, at(15) if k == 0 else at(45))
+            cx, cy = f.w // 2, f.h // 2
+            return [f.mean(cx + x, cy + y, 1) for x, y in red], [f.mean(cx + x, cy + y, 1) for x, y in blue]
+        return look
+    for name, k, red, blue, what in (
+            ("one-mask", 0, ((70, 0), (0, 70)), ((140, 0), (0, 110)),
+             "on the square picture a circle of radius 90: red 70 px right of and below the middle, blue 140 px right "
+             "and 110 px below"),
+            ("one-mask", 1, ((140, 0), (0, 60)), ((200, 0), (0, 110)),
+             "on the picture that fills the canvas, in the same export, an ellipse 320 x 180 px of its own: red 140 px "
+             "right of the middle and 60 px below it, blue 200 px right and 110 px below"),
+            ("one-mask-2x", 0, ((140, 0), (0, 140)), ((220, 0), (0, 220)),
+             "after the canvas is doubled (set_project 1280x720), the project exports again, and on the square picture "
+             "the circle is twice as large (radius 180): red 140 px right and below, blue 220 px right and below"),
+            ("one-mask-2x", 1, ((280, 0), (0, 150)), ((340, 0), (0, 220)),
+             "...and on the picture that fills the canvas the ellipse is twice as large (640 x 360): red 280 px right "
+             "and 150 px below, blue 340 px right and 220 px below")):
+        t.measure(f"the same ellipse (w, h 0.5) on two pictures of different sizes: {what}", shape(name, k, red, blue),
+                  lambda v: all(near(c, RED, 12) for c in v[0]) and all(near(c, BLUE, 12) for c in v[1]),
+                  "red, then blue, +- 12 a channel")

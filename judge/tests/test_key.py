@@ -1,18 +1,19 @@
 """Keys, measured on exports: a colour key with its colour found by the editor (`auto`) on a grey screen with white,
-black and red boxes, and why a chroma key is the wrong key there (it erases every neutral); a key after a colour
-grade; a pillarboxed picture whose bars stay transparent after its key; a green screen keyed with `auto` and its spill
-pulled down by despill; a black background keyed by brightness (`lumakey auto`); and the colour the editor finds for a
-key (detect_key_colour). Port of packages/core/scripts/smoke-key.ts (judge/PORTING.md has the map of its sections).
+black and red boxes; a key after a colour grade; a pillarboxed picture whose bars stay transparent after its key; a
+green screen keyed with `auto` and its spill pulled down by despill; a black background keyed by brightness (`lumakey
+auto`); and the colour the editor finds for a key (detect_key_colour). Port of packages/core/scripts/smoke-key.ts
+(judge/PORTING.md has the map of its sections).
 
 Every picture is a fixture of make.sh (key-*.mp4: BT.601 limited range with all four colour tags), over a flat blue
 clip on the track below, so a keyed (transparent) place shows that blue. The test samples the export where the original
 sampled its own: the mean colour of a 24x24 block (read as the export says: BT.709 limited range), with the original's
 tolerances (40 levels a channel; 60 for the red box, whose edges the chroma subsampling softens; 30 for the spill box).
 The colour `auto` resolves to is read from get_state and must be the one detect_key_colour answers, within 1 level of
-the screen's grey (a flat grey decodes exactly); the export then shows that the key removed exactly that screen. A
-chroma key compares hue and saturation only (PROTOCOL.md, "Effects"), so on the grey screen it erases the white and
-black boxes too. Last, a keyed noisy clip exports the same frames twice: a check of its own, since the original's
-section 5 (the same frames whatever the filter thread count) needs a thread count the judge cannot choose.
+the screen's grey (a flat grey decodes exactly); the export then shows that the key removed exactly that screen.
+Whether a chroma key on that grey also removes the white and black boxes is not specified (PROTOCOL.md, "Effects"), so
+the original's check that it does stays with that script (judge/PORTING.md, key 1). Last, a keyed noisy clip exports
+the same frames twice: a check of its own, since the original's section 5 (the same frames whatever the filter thread
+count) needs a thread count the judge cannot choose.
 
 Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
 """
@@ -20,7 +21,7 @@ import observe
 
 PORT_BOUND = True
 TIMEOUT = 900
-CHECKS = 31
+CHECKS = 29
 EXTRA_MEDIA = ("key-grey.mp4", "key-blue-p.mp4", "key-blue-l.mp4", "key-green.mp4", "key-black.mp4", "key-noisy.mkv")
 
 BLUE, WHITE, BLACK, RED = (0, 0, 255), (255, 255, 255), (0, 0, 0), (255, 0, 0)
@@ -125,13 +126,6 @@ def run(t):
     px("colorkey", 1, 250, 1150, RED, "the red box is kept", 60)
     px("colorkey", 1, 705, 1150, BLACK, "the black outline of the target is kept")
     px("colorkey", 1, 830, 1150, WHITE, "the white middle of the target is kept")
-    # Why colorkey exists: a chroma key at the same grey erases every neutral (PROTOCOL: a chroma key compares hue and
-    # saturation only, and the neutrals share grey's).
-    d.apply_effect(over, "chromakey", color="0x808080", effect_id=ck)
-    x.export("chromakey-grey")
-    px("chromakey-grey", 1, 250, 450, BLUE, "chromakey 0x808080 erases the white box too (a chroma key ignores "
-       "brightness: the blue shows)", 60)
-    px("chromakey-grey", 1, 830, 450, BLUE, "chromakey 0x808080 erases the black box too", 60)
     # A colour grade ahead of the key: it still keys.
     d.apply_effect(over, "colorkey", color="0x808080", effect_id=ck)
     d.apply_colour(over, saturation=1.3)

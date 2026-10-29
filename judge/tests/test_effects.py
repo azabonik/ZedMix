@@ -1,7 +1,8 @@
 """The editor's visual effects: what apply_effect accepts, clamps and refuses, the colour a key or hold effect keeps
 (get_state's colour read as a hex colour, red first: a colour given as #rrggbb or 0xRRGGBB must come back as that
 colour, observe.hex_colour), the bypass and the order of a clip's effects (what get_state reports), and on exports
-that every effect renders (also all stacked on one clip, with an adjustment layer over it), keeps a smaller clip's
+that every effect renders (also all stacked on one clip, with an inverting adjustment layer over it, and with the
+original's layer: a vignette and a colour key on black), keeps a smaller clip's
 letterbox transparent (the track below shows there) at its defaults and at the ends of its ranges, and that the
 vignette's amount darkens the corners in steps. Port of sections 4, 5, 6
 and 8 of packages/core/scripts/smoke-registry.ts (judge/PORTING.md has the map of its sections; its looks, section 9,
@@ -49,8 +50,11 @@ SPATIAL = ("blur", "pixelate", "lens")  # they spread the picture's edge: far ba
 EDGES = [e for e in EFFECTS if (EFFECTS[e].get("amount") or EFFECTS[e].get("params")) and e not in SPATIAL]
 VARIANTS = [(e, "defaults") for e in EFFECTS] + [(e, end) for e in EDGES for end in ("low", "high")]
 
-CHECKS = 1 + 26 + 2 + 2 + len(VARIANTS) + 3   # the track, the rules, the stack, the letterbox, the vignette
+CHECKS = 1 + 26 + 3 + 2 + len(VARIANTS) + 3   # the track, the rules, the stack, the letterbox, the vignette
 ADJ_DIFF = 20  # the least mean grey difference, frame by frame, an inverting adjustment layer makes over the stack
+# The least darkening of the picture's corners (mean grey, frame by frame) the vignette-and-key layer makes: v0.2.0 and
+# this tree darken them by 39.7 (FFmpeg 9.0.2-17) and 42.6 (4.4); a layer whose effects do nothing darkens them by 0.
+VIGNETTE_DARKER = 15
 
 W, H, FPS = 320, 180, 30
 SEG = 8          # frames per segment of the letterbox timeline
@@ -239,6 +243,47 @@ def stack(t, d, bars):
             why2 = f"unmeasurable: {ex}"
     t.check(f"...with an inverting adjustment layer over it: the export decodes clean, 60 frames, and every frame "
             f"differs from the stack alone (mean grey difference {ADJ_DIFF} or more)", ok, why2)
+    # ...and the original's own layer: a vignette and a colour key on black, on a layer of its own over the stack (the
+    # inverting one removed). The export decodes clean with every frame, and it shows the vignette: the corners of
+    # every frame are darker than the stack alone's.
+    what = None
+    try:
+        if adj is not None:
+            d.remove_clip(adj)
+        adj = d.add_adjustment_layer(0, 60)
+        d.apply_effect(adj, "vignette")
+        d.apply_effect(adj, "colorkey", color="0x000000")
+    except drv.JudgeError as ex:
+        what = f"the adjustment layer was not added: {ex}"
+    st = d.get_state()
+    layer = next((x for tr in st.get("tracks", []) for x in tr.get("clips", []) if x.get("id") == adj), None)
+    out3 = t.path("out", "stack-vignette-key.mp4")
+    job3 = d.export(out3)
+    ok, why3 = False, what or job3.get("status")
+    if what is None and job3.get("status") == "done":
+        try:
+            dec3 = observe.decode(out3)
+            a, b = observe.grey_frames(out), observe.grey_frames(out3)
+            darker = [round(corners(x) - corners(y), 1) for x, y in zip(a, b)]
+            ok = (dec3["clean"] and abs(dec3["video_frames"] - 60) <= 1 and len(a) == len(b) and bool(darker)
+                  and min(darker) >= VIGNETTE_DARKER and isinstance(layer, dict) and layer.get("adjustment") is True
+                  and [x.get("effect") for x in layer.get("effects") or []] == ["vignette", "colorkey"])
+            why3 = {"exit": dec3["exit"], "video_frames": dec3["video_frames"], "clean": dec3["clean"],
+                    "least darkening of the corners (mean grey, the stack alone's less this)":
+                        min(darker) if darker else None, "the layer in get_state": layer}
+        except observe.Unmeasurable as ex:
+            why3 = f"unmeasurable: {ex}"
+    t.check(f"...with the original's adjustment layer over it (a vignette and a colour key on black): the export "
+            f"decodes clean, 60 frames, and in every frame the corners are darker than the stack alone's (mean grey "
+            f"{VIGNETTE_DARKER} or more lower)", ok, why3)
+
+
+def corners(frame, w=160, n=12):
+    """The mean grey of the four n x n corners of the picture (x 40 to 279 of the 320x180 canvas: 20 to 139 of a grey
+    frame of 160 x 90, observe.grey_frames), each 2 px in from the picture's edges."""
+    vals = [frame[y * w + x] for y0 in (2, 90 - 2 - n) for x0 in (22, 140 - 2 - n)
+            for y in range(y0, y0 + n) for x in range(x0, x0 + n)]
+    return sum(vals) / len(vals)
 
 
 # ---------------------------------------------------------------- sections 5 and 8: the letterbox stays transparent

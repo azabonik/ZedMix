@@ -380,12 +380,12 @@ def run(t):
   `t.look(files=[...], folders=[...], walk=[...], stat=[...], read=[...])`, not `open` or `os.listdir`: with
   `--as-user` the editor keeps files that the runner's user cannot read (mode 0600 in folders of mode 0700), and
   `t.look` then also looks as the editor's user. It returns each file's sha256 (or None), each folder's sorted names
-  (or None), every entry under each walk root with the size of each regular file, each `stat` path's kind, mode, size
-  and link target (or None), and each `read` path's bytes (at most 1 MiB, or None). `stat` and `read` follow no link
-  at the path itself, answer None for a path whose folder is not inside the test's scratch folder (made real), and
-  `read` checks where the file it opened is before it reads it: a link the editor put on the way cannot make the judge
-  read a file of its own. What the editor's user reports is the editor's own word on its own files, as it is without
-  `--as-user`.
+  (or None), every entry under each walk root with the size of each regular file, each `stat` path's kind, mode, size,
+  link target, device and inode numbers (or None), and each `read` path's bytes (at most 1 MiB, or None). `stat` and
+  `read` follow no link at the path itself, answer None for a path whose folder is not inside the test's scratch
+  folder (made real), and `read` checks where the file it opened is before it reads it: a link the editor put on the
+  way cannot make the judge read a file of its own. What the editor's user reports is the editor's own word on its
+  own files, as it is without `--as-user`.
 - `t.driver()` runs the adapter, and so the editor and everything they start, under `strace -f -yy` with the
   network calls traced (`connect`, `sendto`, `sendmsg`, `sendmmsg`, `io_uring_setup`) when strace is available
   (`JUDGE_STRACE`, else `strace` on `PATH`; see "A download during a run" under "Threat model"). strace refuses every `io_uring_setup` with

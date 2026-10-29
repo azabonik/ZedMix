@@ -536,8 +536,9 @@ def look(req):
     Returns {"files": {path: sha256 of a regular file it can read, else None}, "folders": {path: sorted names, or None
     when it cannot list it}, "walk": {path: size of a regular file, None for a folder, a link or anything else} for
     every entry under each walk root (links are not followed), "stat": {path: {"type": "file" | "dir" | "link" |
-    "other", "mode": permission bits, "size", "link": a link's target or None}, or None}, "read": {path: the bytes of a
-    regular file as base64, when it holds at most 1 MiB, else None}}.
+    "other", "mode": permission bits, "size", "link": a link's target or None, "dev", "ino": its device and inode
+    numbers}, or None}, "read": {path: the bytes of a regular file as base64, when it holds at most 1 MiB, else
+    None}}.
     stat and read follow no link at the path itself (lstat, O_NOFOLLOW), and answer None for a path whose folder,
     made real, is not inside `root` (when given), so a link the editor put on the way cannot point them at a file
     of the user that runs this; read also checks where the file it opened is (/proc/self/fd) before it reads."""
@@ -560,7 +561,7 @@ def look(req):
             kind = ("link" if stat.S_ISLNK(st.st_mode) else "dir" if stat.S_ISDIR(st.st_mode)
                     else "file" if stat.S_ISREG(st.st_mode) else "other")
             out["stat"][p] = {"type": kind, "mode": stat.S_IMODE(st.st_mode), "size": st.st_size,
-                              "link": os.readlink(p) if kind == "link" else None}
+                              "link": os.readlink(p) if kind == "link" else None, "dev": st.st_dev, "ino": st.st_ino}
         except OSError:
             pass
     for p in req.get("read", []):
@@ -1181,12 +1182,12 @@ class T:
     def look(self, files=(), folders=(), walk=(), stat=(), read=()):
         """What the editor can see of these paths, for checks on its own files (run.look): {"files": {path: sha256 or
         None}, "folders": {path: sorted names or None}, "walk": {path: size of a regular file, else None} under each
-        walk root, "stat": {path: {"type", "mode", "size", "link"} or None}, "read": {path: bytes or None}}. stat and
-        read look only inside this test's scratch folder and follow no link at the path (run.look). This process looks
-        itself; under --as-user the editor's user looks too (the editor keeps private files, mode 0600 in folders of
-        mode 0700, that the runner's user cannot read): a file or folder this process cannot read gets that user's
-        answer, and the walk lists what either of them sees. That user's answer is the editor's own word on its own
-        files (it runs as the editor's user), as it is in a run without --as-user."""
+        walk root, "stat": {path: {"type", "mode", "size", "link", "dev", "ino"} or None}, "read": {path: bytes or
+        None}}. stat and read look only inside this test's scratch folder and follow no link at the path (run.look).
+        This process looks itself; under --as-user the editor's user looks too (the editor keeps private files, mode
+        0600 in folders of mode 0700, that the runner's user cannot read): a file or folder this process cannot read
+        gets that user's answer, and the walk lists what either of them sees. That user's answer is the editor's own
+        word on its own files (it runs as the editor's user), as it is in a run without --as-user."""
         import base64
         req = {"files": list(files), "folders": list(folders), "walk": list(walk), "stat": list(stat),
                "read": list(read), "root": self.scratch}

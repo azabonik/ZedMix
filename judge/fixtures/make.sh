@@ -60,7 +60,10 @@
 # The colour test's sources (test_colorspace): the 8 x 4 grid of 32 flat patches (cs_patches below: full and 75 %
 # bars, skin, sky, darks, greys), each patch W/8 x H/4, coded from exact RGB with the matrix and range named and
 # tagged with the tags named and no others (setparams on the frames and the encoder's options, so any FFmpeg writes
-# the same tags), 0.6 s at 30 fps; H.264 crf 4 unless said:
+# the same tags), 0.6 s at 30 fps; H.264 crf 4 unless said. Each video's frames also show their own index (0 to 17) in
+# a band over the grid's top left corner (x < W/4, y < H/16; the patches' middles are below it): eight stripes of W/32,
+# stripe b grey 220 when bit b of the index is set and grey 30 when not, so a reversed, slowed or held frame is told
+# from its neighbours; the stills (cs-grid.png, .jpg), the lossless clips (cs-testsrc, cs-gridll) and cs-green have no band:
 #   cs-hd.mp4      1280x720 BT.709 limited, untagged        cs-709.mp4    1280x720 BT.709 limited, all four tags
 #   cs-601.mp4     1280x720 BT.601 limited, all four tags    cs-sd601.mp4  720x480 BT.601 limited, all four tags
 #   cs-sd.mp4      720x480 BT.601 limited, untagged          cs-sd709.mp4  720x480 BT.709 limited, all four tags
@@ -264,6 +267,10 @@ tagopts() {
   [ "$3" = - ] || o="$o -color_trc $3"; [ "$4" = - ] || o="$o -color_range $4"
   printf '%s' "$o"
 }
+# The frame's index over the grid's top left corner (x < W/4, y < H/16, above the middles of the top row's patches):
+# eight stripes, stripe b grey 220 when bit b of the frame's index is set, grey 30 when not (in RGB, before the coding)
+CS_BIT="if(lt(Y\\,H/16)*lt(X\\,W/4)\\,if(mod(floor(N/pow(2\\,floor(X*32/W)))\\,2)\\,220\\,30)"
+CS_BAND="format=gbrp,geq=r='$CS_BIT\\,r(X\\,Y))':g='$CS_BIT\\,g(X\\,Y))':b='$CS_BIT\\,b(X\\,Y))',format=rgb24"
 # patches <file> <w> <h> <matrix> <range> <codec> <space> <primaries> <transfer> <range tag>
 patches() {
   local f="$1" w="$2" h="$3" m="$4" rg="$5" codec="$6" pix=yuv420p enc
@@ -273,7 +280,7 @@ patches() {
     ffv1) enc="-c:v ffv1"; pix=yuva420p ;;
   esac
   # shellcheck disable=SC2046,SC2086
-  "$FF" -nostdin -hide_banner -loglevel error -y -filter_complex "$(grid "$w" "$h" 0.6),scale=out_color_matrix=$m:out_range=$rg:flags=lanczos+accurate_rnd+full_chroma_int,format=$pix,$(tagstep "$7" "$8" "$9" "${10}")" \
+  "$FF" -nostdin -hide_banner -loglevel error -y -filter_complex "$(grid "$w" "$h" 0.6),$CS_BAND,scale=out_color_matrix=$m:out_range=$rg:flags=lanczos+accurate_rnd+full_chroma_int,format=$pix,$(tagstep "$7" "$8" "$9" "${10}")" \
     $enc -pix_fmt $pix $(tagopts "$7" "$8" "$9" "${10}") "$OUT/$f"
 }
 if want cs-hd.mp4; then patches cs-hd.mp4 1280 720 bt709 tv h264 - - - -; fi

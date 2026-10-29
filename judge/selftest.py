@@ -1522,10 +1522,12 @@ def look_units(s):
              os.path.join(root, "nope")]
     got = run.look({"stat": paths, "read": paths, "root": root})
     st, rd = got["stat"], got["read"]
-    s.unit("look stat: a file's kind, mode and size, a link's target (not followed), a folder; nothing for a path "
-           "outside root (through a link to a folder) or one that is not there",
-           st[f] == {"type": "file", "mode": 0o640, "size": 3, "link": None}
-           and st[paths[1]] == {"type": "link", "mode": st[paths[1]]["mode"], "size": len(secret), "link": secret}
+    fs, ls = os.stat(f), os.lstat(paths[1])
+    s.unit("look stat: a file's kind, mode, size, device and inode, a link's target (not followed) and its own inode, "
+           "a folder; nothing for a path outside root (through a link to a folder) or one that is not there",
+           st[f] == {"type": "file", "mode": 0o640, "size": 3, "link": None, "dev": fs.st_dev, "ino": fs.st_ino}
+           and st[paths[1]] == {"type": "link", "mode": st[paths[1]]["mode"], "size": len(secret), "link": secret,
+                                "dev": ls.st_dev, "ino": ls.st_ino}
            and st[paths[2]]["type"] == "dir" and st[paths[3]] is None and st[paths[5]] is None, st)
     s.unit("look read: a regular file's bytes; nothing through a link at the path, through a link to a folder outside "
            "root, for a folder, a file over 1 MiB or one that is not there",
