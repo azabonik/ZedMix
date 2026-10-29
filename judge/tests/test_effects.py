@@ -1,8 +1,9 @@
 """The editor's visual effects: what apply_effect accepts, clamps and refuses, the colour a key or hold effect keeps
 (get_state's colour read as a hex colour, red first: a colour given as #rrggbb or 0xRRGGBB must come back as that
 colour, observe.hex_colour), the bypass and the order of a clip's effects (what get_state reports), and on exports
-that every effect renders, keeps a smaller clip's letterbox transparent (the track below shows there) at its defaults
-and at the ends of its ranges, and that the vignette's amount darkens the corners in steps. Port of sections 4, 5, 6
+that every effect renders (also all stacked on one clip, with an adjustment layer over it), keeps a smaller clip's
+letterbox transparent (the track below shows there) at its defaults and at the ends of its ranges, and that the
+vignette's amount darkens the corners in steps. Port of sections 4, 5, 6
 and 8 of packages/core/scripts/smoke-registry.ts (judge/PORTING.md has the map of its sections; its looks, section 9,
 are tests/test_effect_looks.py).
 
@@ -48,7 +49,8 @@ SPATIAL = ("blur", "pixelate", "lens")  # they spread the picture's edge: far ba
 EDGES = [e for e in EFFECTS if (EFFECTS[e].get("amount") or EFFECTS[e].get("params")) and e not in SPATIAL]
 VARIANTS = [(e, "defaults") for e in EFFECTS] + [(e, end) for e in EDGES for end in ("low", "high")]
 
-CHECKS = 1 + 26 + 1 + 2 + len(VARIANTS) + 3   # the track, the rules, the stack, the letterbox, the vignette
+CHECKS = 1 + 26 + 2 + 2 + len(VARIANTS) + 3   # the track, the rules, the stack, the letterbox, the vignette
+ADJ_DIFF = 20  # the least mean grey difference, frame by frame, an inverting adjustment layer makes over the stack
 
 W, H, FPS = 320, 180, 30
 SEG = 8          # frames per segment of the letterbox timeline
@@ -209,6 +211,34 @@ def stack(t, d, bars):
     t.check("every effect stacked on one clip (pixelate bypassed) renders: the export decodes clean, 60 frames",
             dec is not None and names == list(EFFECTS) and dec["clean"] and abs(dec["video_frames"] - 60) <= 1,
             f"effects {names}; {why}")
+    # ...and with an adjustment layer over it (the original's stack has one): an inverting layer over the whole clip,
+    # on the track above. It renders clean, and it shows: every frame of the export differs from the stack alone.
+    what, adj = None, None
+    try:
+        adj = d.add_adjustment_layer(0, 60)
+        d.apply_effect(adj, "invert")
+    except drv.JudgeError as ex:
+        what = f"the adjustment layer was not added: {ex}"
+    st = d.get_state()
+    layer = next((x for tr in st.get("tracks", []) for x in tr.get("clips", []) if x.get("id") == adj), None)
+    out2 = t.path("out", "stack-adjusted.mp4")
+    job2 = d.export(out2)
+    ok, why2 = False, what or job2.get("status")
+    if what is None and job2.get("status") == "done":
+        try:
+            dec2 = observe.decode(out2)
+            a, b = observe.grey_frames(out), observe.grey_frames(out2)
+            diffs = [round(observe.mean_abs_diff(x, y), 1) for x, y in zip(a, b)]
+            ok = (dec2["clean"] and abs(dec2["video_frames"] - 60) <= 1 and len(a) == len(b) and bool(diffs)
+                  and min(diffs) >= ADJ_DIFF and isinstance(layer, dict) and layer.get("adjustment") is True
+                  and [x.get("effect") for x in layer.get("effects") or []] == ["invert"])
+            why2 = {"exit": dec2["exit"], "video_frames": dec2["video_frames"], "clean": dec2["clean"],
+                    "least frame difference from the stack alone": min(diffs) if diffs else None,
+                    "the layer in get_state": layer}
+        except observe.Unmeasurable as ex:
+            why2 = f"unmeasurable: {ex}"
+    t.check(f"...with an inverting adjustment layer over it: the export decodes clean, 60 frames, and every frame "
+            f"differs from the stack alone (mean grey difference {ADJ_DIFF} or more)", ok, why2)
 
 
 # ---------------------------------------------------------------- sections 5 and 8: the letterbox stays transparent

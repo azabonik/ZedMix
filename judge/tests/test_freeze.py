@@ -1,6 +1,7 @@
 """freeze_frame holds the exact frame shown at a moment of a clip as a still clip, and the timeline ripples as the
 user chose: the timeline grows by exactly the still, the still keeps the clip's look (its effects, its colour grade,
-colour adjustments and look-up table: it shows the colours the clip shows) and has no sound, the clip's linked sound
+colour adjustments and look-up table, its opacity, crop, position, mask and blend mode: it shows the colours the clip
+shows) and has no sound, the clip's linked sound
 is split and silent under the still and in sync after it, a freeze at the first or past the last frame
 leaves no empty half, a slowed clip holds the frame shown there and never one past its out point, a freeze inside a
 transition's overlap is refused, freezing the linked sound freezes its picture, one undo restores everything; ripple
@@ -28,13 +29,21 @@ EXTRA_MEDIA = ("idx.mp4",)   # the optional fixtures it uses (run.py)
 TIMEOUT = 900
 FPS = 30
 TOL = 1.0 / FPS + 0.012
-CHECKS = 12 + 2 + 2 + 1 + 5 + 3 * 2 + 2 + 3 + 3 + 9
+CHECKS = 12 + 2 + 2 + 1 + 5 + 3 * 2 + 2 + 3 + 3 + 9 + 5  # + 5: the compositing looks (batch 3b)
 # The looks a still must keep, each set on its own (see looks()), and the blocks (x, y) where its colours are read: one
 # in the red half and one in the blue half of fx-redblue.mp4 on the 180x90 canvas.
 LOOKS = [("colour grade (brightness, contrast, saturation)",
           lambda t, d, c: d.apply_colour(c, saturation=0.2, brightness=0.1)),
          ("colour adjustments (temperature, tint, hue)", lambda t, d, c: d.apply_colour(c, temperature=-0.8, tint=0.6)),
-         ("look-up table", lambda t, d, c: d.apply_lut(c, t.media("look.cube")))]
+         ("look-up table", lambda t, d, c: d.apply_lut(c, t.media("look.cube"))),
+         ("opacity (0.4, over the empty track below: darker)", lambda t, d, c: d.set_transform(c, opacity=0.4)),
+         ("crop (to the blue half: blue everywhere)", lambda t, d, c: d.crop_clip(c, 180, 20, 120, 60)),
+         ("position (moved right by half the canvas: the red half on the right, the canvas empty on the left)",
+          lambda t, d, c: d.set_transform(c, x=0.5)),
+         ("mask (a rect that keeps the left half: the blue half gone)",
+          lambda t, d, c: d.set_mask(c, shape="rect", x=0.25, y=0.5, w=0.5, h=1)),
+         ("blend mode (multiply, over the empty track below: black)",
+          lambda t, d, c: d.set_blend_mode(c, "multiply"))]
 BLOCKS = [(20, 40), (150, 40)]
 
 

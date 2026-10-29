@@ -16,17 +16,21 @@ original's limits (4 levels on an export, 6 on a rendered frame, 3 on a still, 8
   over the size), HD with only its matrix tagged, full range with no matrix (BT.601 full, as a JPEG), and an untagged
   SD clip shown turned a quarter (its 480 coded lines make it SD, whatever way it is shown).
 - Lossless (3b): a plain clip at the canvas's size exports its own 4:2:0 samples (also with effects that change
-  nothing); a crop with an odd offset or size cuts the picture where it says.
+  nothing, and with a chroma key that is switched off: first seen to key, then bypassed); a crop with an odd offset or
+  size cuts the picture where it says.
 - Copies (3c): a reversed and a slowed (blended frames) copy of a BT.601 source, of untagged VP9 and of an FFV1 clip
-  with alpha export with the source's colours.
+  with alpha export with the source's colours. The copy must be a new file of the editor's, by the judge's own look
+  (new_file: listed before the action, its real path, not the judge's own, not the bytes of a file already there or
+  of the source), with the frames the clip plays (18 reversed, 36 slowed).
 - Motion graphics (3d): a graphic that draws flat colours exports with them (built-in renderer; the graphics add-on
   when the judge has one).
 - An OTIO file from another editor, which says nothing about its media's colours, opens and exports with the true
   colours: a check of its own. The original's section 4 (a project saved before the editor recorded each file's colour
   description) stays v0.2.0-only: an OTIO import reads the media again, so it never meets such a project, and only the
   editor's own project format can hold one.
-- render_frame, before and after a preview render (5); a freeze frame's still, a thumbnail and the colour found for a
-  key (6: within 1 level); a JPEG is a still (2).
+- render_frame, before and after a preview render (5); a freeze frame's still (its own file, a new one as for the
+  copies, and where it plays), a thumbnail (a new file too) and the colour found for a key (6: within 1 level of the
+  screen's border as the judge reads it); a JPEG is a still (2).
 
 Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
 """
@@ -39,7 +43,7 @@ import observe
 
 PORT_BOUND = True
 TIMEOUT = 1800
-CHECKS = 49
+CHECKS = 51
 EXTRA_MEDIA = ("cs-hd.mp4", "cs-709.mp4", "cs-601.mp4", "cs-sd601.mp4", "cs-sd.mp4", "cs-sd709.mp4", "cs-full709.mp4",
                "cs-fullnm.mp4", "cs-partial.mp4", "cs-vp9.webm", "cs-rotsd.mp4", "cs-grid.png", "cs-grid.jpg",
                "cs-cut601.mkv", "cs-testsrc.mp4", "cs-gridll.mp4", "cs-green.mp4")
@@ -116,6 +120,59 @@ def worst(cells, want=PATCH):
     return round(err[k], 1), f"patch {k} {tuple(round(v) for v in cells[k])} for {want[k]}"
 
 
+def new_file(t, before, path, sources=()):
+    """Why `path` (a file the editor reports it made: a copy, a still, a thumbnail) is not a new file of the editor's,
+    or None when it is. `before` is edits.files(t) listed just before the action, the judge's own files included. The
+    judge's own look decides, never the path's spelling: the file, made real (links and "/./" resolved), must be a
+    regular file in the test's folder now (edits.files), outside the judge's own folders (out/, in/), not among the
+    files listed before, and not the same bytes as any of them (sha256 of each one of the same size) or as the media
+    `sources` it was made from, so a link, a hard link or a copy of a file that was already there is not a new
+    file."""
+    if not isinstance(path, str) or not path:
+        return f"no file named ({path!r})"
+    real = os.path.realpath(path)
+    scratch = os.path.realpath(t.scratch)
+    if not real.startswith(scratch + os.sep):
+        return f"{path} is not in the test's folder"
+    for mine in ("out", "in"):
+        if real.startswith(os.path.join(scratch, mine) + os.sep):
+            return f"{path} is in the judge's own folder {mine}/"
+    was = {os.path.realpath(p): s for p, s in before.items()}
+    if real in was:
+        return f"{path} was there before the action"
+    now = {os.path.realpath(p): s for p, s in edits.files(t).items()}
+    if real not in now:
+        return f"{path} is not a regular file in the test's folder"
+    same = [p for p, s in was.items() if s == now[real]]
+    hashes = t.look(files=[real] + same)["files"]
+    if hashes.get(real) is None:
+        return f"{path} cannot be read"
+    dup = [p for p in same if hashes.get(p) == hashes[real]]
+    dup += [p for p in sources if observe.sha256(p) == hashes[real]]
+    if dup:
+        return f"{path} holds the same bytes as {dup[0]}, which was there before the action"
+    return None
+
+
+def picture_error(path):
+    """worst() of a picture the editor wrote (a still, a thumbnail), read as its format is read: a PNG as its RGB, a
+    JPEG as BT.601 full range. -> (error, worst patch, codec)"""
+    codec = (observe.video_stream(path, observe.STILL) or {}).get("codec_name")
+    chain = {"mjpeg": observe.read_as("bt601", "pc"), "png": "null"}.get(codec)
+    if chain is None:
+        raise observe.Unmeasurable(f"{os.path.basename(path)} is {codec}, not a JPEG or PNG picture")
+    return worst(observe.Picture(path, 0, chain, observe.STILL).cells(8, 4)) + (codec,)
+
+
+def frame_count(path):
+    """The number of frames the judge decodes from the video at `path` (up to 1000)."""
+    vs = observe.video_stream(path) or {}
+    w, h = vs.get("width"), vs.get("height")
+    if not w or not h:
+        raise observe.Unmeasurable(f"{os.path.basename(path)} has no picture size")
+    return len(observe.pixels(path, 0, "null", "gray", frames=1000)) // (w * h)
+
+
 def turned_error(path, at):
     """The patches of an export of cs-rotsd.mp4 (an 848x480 grid shown turned a quarter, on a 480x848 canvas), read
     for each way the picture can have been turned (clockwise, counter-clockwise; and not turned, fitted): the reading
@@ -183,25 +240,45 @@ def lossless(t, d, o):
             ("testsrc (hard colour edges at odd places)", "cs-testsrc.mp4", {"p99": 2, "mean": 0.2}, False),
             ("the patch grid (edges on the 2 x 2 grid)", "cs-gridll.mp4", {"p99": 0, "mean": 0.01, "max": 2}, False),
             ("testsrc with effects that change nothing (invert twice)", "cs-testsrc.mp4", {"p99": 2, "mean": 0.2},
-             True)):
+             "invert"),
+            ("testsrc with a switched-off chroma key", "cs-testsrc.mp4", {"p99": 2, "mean": 0.2}, "keyoff")):
         fresh(d, W, H)
         clip = place(t, d, media)
-        if fx:
+        on = None
+        if fx == "invert":
             d.apply_effect(clip, "invert")
             d.apply_effect(clip, "invert")
+        elif fx == "keyoff":
+            # The key is switched on first and exported (it must change the picture: testsrc's green bars keyed out),
+            # then switched off (bypassed, kept): the judge sees the key work before it sees it bypassed.
+            eid = d.apply_effect(clip, "chromakey", color=KEY_GREEN)
+            on = o.export("keyon", lossless=True)
+            d.apply_effect(clip, "chromakey", effect_id=eid, enabled=False)
         name = o.export(f"plain-{media}-{fx}", lossless=True)
+        effects = (edits.clip(d.get_state(), clip) or {}).get("effects")
 
-        def same(name=name, media=media):
+        def same(name=name, media=media, on=on, effects=effects):
             a, b = planes(t.media(media)), planes(o.path(name))
             if len(a) != len(b):
                 raise observe.Unmeasurable(f"{len(a)} samples in the source's first frame, {len(b)} in the export's")
-            return observe.plane_diff(a, b, 0, y_size), observe.plane_diff(a, b, y_size, len(a))
+            got = (observe.plane_diff(a, b, 0, y_size), observe.plane_diff(a, b, y_size, len(a)))
+            if on is None:
+                return got
+            k = planes(o.path(on))
+            keyed = observe.plane_diff(a, k, 0, y_size) if len(k) == len(a) else None
+            bypassed = (isinstance(effects, list) and len(effects) == 1 and effects[0].get("effect") == "chromakey"
+                        and effects[0].get("enabled") is False)
+            return got + ({"the key switched on, Y against the source": keyed, "get_state's effects": effects,
+                           "ok": bool(keyed and keyed["mean"] >= KEY_ON_MEAN and bypassed)},)
 
         def within(v, limit=limit):
             return all(s["p99"] <= limit["p99"] and s["mean"] <= limit["mean"] and s.get("max", 0) <= limit.get(
-                "max", 255) for s in v)
+                "max", 255) for s in v[:2]) and (len(v) == 2 or v[2]["ok"])
         t.measure(f"{label}: a plain clip at the canvas's size exports its own samples (lossless; Y, then U and V, "
-                  f"against the source's)", same, within, f"each plane {limit}")
+                  f"against the source's)" + (
+                      f" (the key, on, first changed the export: Y mean difference {KEY_ON_MEAN} or more; then "
+                      f"get_state shows it kept and switched off)" if fx == "keyoff" else ""), same, within,
+                  f"each plane {limit}")
     # Crops with an odd offset or size, on a 640x360 canvas: the export against the source read whole, cut exactly
     # where the crop says (in RGB) and fitted to the canvas. The first needs no scaling, so its reference is the
     # source's own pixels; the others are scaled a little to fit, and the judge does not know the editor's resampling
@@ -241,6 +318,10 @@ def lossless(t, d, o):
 # two crops (mean 0.73 and 0.39), and U/V mean 0.09 to 0.11 on the third; the right cut reads p99 0 and mean 0.004 to
 # 0.014 on v0.2.0's exports (judge/PORTING.md, colorspace 3b).
 CROP_UV_MEAN = 0.05
+# The key that is switched on and then off (3b): a chroma key on pure green, which keys out testsrc's green bars (the
+# canvas shows black there), so the export with it on differs from the source by KEY_ON_MEAN or more on average in Y
+# (v0.2.0: 21.6 with FFmpeg 4.4, 22.3 with 9.0.2-17).
+KEY_GREEN, KEY_ON_MEAN = "0x00FF00", 10
 CROP_SCALERS = ("lanczos", "bicubic", "spline", "bilinear", "area")
 
 
@@ -252,6 +333,7 @@ def copies(t, d, o):
             fresh(d, 1280, 720)
             clip = place(t, d, media)
             before = d.get_state()
+            files = edits.files(t)
             what = None
             try:
                 if bake == "reverse":
@@ -265,19 +347,27 @@ def copies(t, d, o):
             c = edits.clip(after, clip) or next(iter(edits.clips(after, "v0")), None)
             new = edits.new_assets(before, after)
             path = next((a.get("path") for a in after.get("assets", []) if c and a.get("id") == c.get("asset")), None)
-            made = (c is not None and c.get("asset") in new and isinstance(path, str)
-                    and os.path.realpath(path).startswith(os.path.realpath(t.scratch) + os.sep))
-            try:  # the judge's own look: a video file there
-                made = made and observe.video_stream(path) is not None
-            except observe.Unmeasurable as e:
-                made, what = False, what or f"the copy {path} cannot be read: {e}"
+            # The copy holds as many frames as the clip plays at 1x: the source's 18 reversed, or 36 (0.5x) slowed.
+            frames = SECS if bake == "reverse" else 2 * SECS
+            made = what
+            if made is None:
+                made = (None if c is not None and c.get("asset") in new else
+                        f"the clip {c} plays no asset that is new in the State") or new_file(t, files, path,
+                                                                                          (t.media(media),))
+            if made is None:
+                try:  # the judge's own look: a video of the right length
+                    n = frame_count(path)
+                    made = (None if frames <= n <= frames + 1 and (c or {}).get("length_frames") == frames else
+                            f"the copy holds {n} frames and the clip is {(c or {}).get('length_frames')} frames long "
+                            f"(want {frames} each, the copy one more at most)")
+                except observe.Unmeasurable as e:
+                    made = f"the copy {path} cannot be read: {e}"
             name = o.export(f"{bake}-{media}")
             at = 0.3 if bake == "reverse" else 0.6
             t.measure(f"{label}, {'reversed' if bake == 'reverse' else 'slowed to 0.5x with blended frames'}: the clip "
-                      f"plays the editor's new copy (a video in the test's folder), and the export shows the true colours "
-                      f"(within 4)",
-                      lambda name=name, at=at, made=made, c=c, path=path, what=what: (
-                          made or what or f"no new copy: the clip {c}, its file {path}", o.error(name, at)),
+                      f"plays the editor's new copy (a new video file in the editor's folders, {frames} frames), and "
+                      f"the export shows the true colours (within 4)",
+                      lambda name=name, at=at, made=made: (made or True, o.error(name, at)),
                       lambda v: v[0] is True and v[1][0] <= 4, "a new copy; patches within 4")
 
 
@@ -306,17 +396,30 @@ def stills_and_frames(t, d, o):
         o.render("frame-preview", 0.3)
     t.measure("...and after a preview render: within 6", lambda: o.error("frame-preview", 0, chain="null"),
               lambda v: v[0] <= 6, "<= 6")
-    # 6. a freeze frame's still, read where it plays (render_frame at its middle)
+    # 6. a freeze frame's still: its own file (a new picture in the editor's folders, read as its format is read, as
+    # the original read it) and where it plays (render_frame at its middle)
     before = d.get_state()
+    files = edits.files(t)
     d.freeze_frame(clip, 6, 15)
     after = d.get_state()
     new = edits.new_assets(before, after)
     still = next((c for c in edits.clips(after, "v0") if c.get("asset") in new), None)
-    if still is not None:
+    still_path = next((a.get("path") for a in after.get("assets", []) if still and a.get("id") == still["asset"]),
+                      None)
+    still_why = (f"no still in the State: v0 {edits.clips(after, 'v0')}" if still is None else
+                 new_file(t, files, still_path, (t.media("cs-hd.mp4"),)))
+    if still_why is None:
         o.render("still", (still["start_frame"] + 7.5) / FPS)
     else:
-        o.out["still"] = (None, f"no still in the State: v0 {edits.clips(after, 'v0')}")
-    t.measure("a freeze frame of untagged HD: its still shows the true colours (render_frame at its middle, within 4)",
+        o.out["still"] = (None, f"the still's file is not a new file of the editor's: {still_why}")
+
+    def still_file():
+        if still_why:
+            raise observe.Unmeasurable(f"the still's file is not a new file of the editor's: {still_why}")
+        return picture_error(still_path)
+    t.measure("a freeze frame of untagged HD: its still's own file (a new picture in the editor's folders, read as its "
+              "format is read) shows the true colours (within 3)", still_file, lambda v: v[0] <= 3, "<= 3")
+    t.measure("...and where it plays (render_frame at its middle): within 4",
               lambda: o.error("still", 0, chain="null"), lambda v: v[0] <= 4, "<= 4")
 
     # 6. a thumbnail: read as its format is read (a JPEG as BT.601 full range)
@@ -326,21 +429,22 @@ def stills_and_frames(t, d, o):
             path = d.thumbnail(asset, 0.2)
         except drv.JudgeError as e:
             raise observe.Unmeasurable(f"thumbnail failed: {e}")
-        real = os.path.realpath(path) if isinstance(path, str) else ""
-        if not real.startswith(os.path.realpath(t.scratch) + os.sep) or path in mine:
-            raise observe.Unmeasurable(f"the thumbnail {path!r} is not a new file in the test's folder")
-        codec = (observe.video_stream(path, observe.STILL) or {}).get("codec_name")
-        chain = {"mjpeg": observe.read_as("bt601", "pc"), "png": "null"}.get(codec)
-        if chain is None:
-            raise observe.Unmeasurable(f"the thumbnail is {codec}, not a JPEG or PNG picture")
-        return worst(observe.Picture(path, 0, chain, observe.STILL).cells(8, 4)) + (codec,)
+        why = new_file(t, mine, path)
+        if why:
+            raise observe.Unmeasurable(f"the thumbnail is not a new file of the editor's: {why}")
+        return picture_error(path)
     t.measure("a thumbnail of untagged HD (a new picture in the editor's folders), read as its format is read: within "
               "8 levels of the true colours", thumb, lambda v: v[0] <= 8, "<= 8")
-    # 6. the colour found for a key on an untagged HD green screen
+    # 6. the colour found for a key on an untagged HD green screen: the screen's colour as the judge reads it (its
+    # border, read as BT.709 limited range as the export reads an untagged HD file; 0x1EC83D, the 0x1EC83C it was made
+    # from after its coding), within 1, and within the original's 3 of 0x1EC83C
     fresh(d, 1280, 720)
     green = place(t, d, "cs-green.mp4")
 
     def key():
+        pic = observe.Picture(t.media("cs-green.mp4"), 0, AS_709)
+        border = [pic.box(x, y, 32, 32) for x, y in ((0, 0), (1248, 0), (0, 688), (1248, 688))]
+        screen = tuple(round(sum(b[i] for b in border) / len(border)) for i in range(3))
         try:
             got = d.detect_key_colour(green)
         except drv.JudgeError as e:
@@ -349,9 +453,12 @@ def stills_and_frames(t, d, o):
         if v is None:
             raise observe.Unmeasurable(f"no hex colour in {got}")
         rgb = ((v >> 16) & 255, (v >> 8) & 255, v & 255)
-        return max(abs(a - b) for a, b in zip(rgb, (30, 200, 60))), got
-    t.measure("detect_key_colour on an untagged HD green screen finds its true colour, 0x1EC83C (each channel within "
-              "1; read as BT.601 it would be 0x2CE341, 27 off in green)", key, lambda v: v[0] <= 1, "<= 1")
+        return (max(abs(a - b) for a, b in zip(rgb, screen)), max(abs(a - b) for a, b in zip(rgb, (30, 200, 60))),
+                "#%02x%02x%02x" % screen, got)
+    t.measure("detect_key_colour on an untagged HD green screen finds its colour: within 1 of the screen's border as "
+              "the judge reads it, and within 3 of the 0x1EC83C it was made from (read as BT.601 it would be "
+              "0x2CE341, 27 off in green)", key, lambda v: v[0] <= 1 and v[1] <= 3,
+              "<= 1 of the border, <= 3 of 0x1EC83C")
 
 
 # ---------------------------------------------------------------- 3d: motion graphics

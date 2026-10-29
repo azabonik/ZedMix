@@ -990,6 +990,34 @@ class Adapter:
         self.call("set_clip_transform", args)
         return {}
 
+    KEYFRAMED = ("x", "y", "scale", "rotation", "opacity")
+    EASES = ("linear", "hold", "ease", "easeIn", "easeOut")
+
+    def op_set_keyframes(self, a):
+        """v0.2.0's set_keyframes: the property and each keyframe's frame, value and ease are passed on unchanged."""
+        prop = arg_str(a, "property")
+        if prop not in self.KEYFRAMED:
+            raise bad(f"'property' must be one of {', '.join(self.KEYFRAMED)}, got {prop!r}")
+        kfs = a.get("keyframes")
+        if not isinstance(kfs, list):
+            raise bad(f"'keyframes' must be a list, got {kfs!r}")
+        out = []
+        for k in kfs:
+            if not isinstance(k, dict):
+                raise bad(f"a keyframe must be an object, got {k!r}")
+            frame = arg_int(k, "frame")
+            if frame < 0:
+                raise bad(f"a keyframe's 'frame' must be >= 0, got {frame!r}")
+            kf = {"frame": frame, "value": arg_num(k, "value")}
+            ease = arg_str(k, "ease", required=False)
+            if ease is not None:
+                if ease not in self.EASES:
+                    raise bad(f"'ease' must be one of {', '.join(self.EASES)}, got {ease!r}")
+                kf["ease"] = ease
+            out.append(kf)
+        self.call("set_keyframes", {"clipId": arg_str(a, "clip"), "property": prop, "keyframes": out})
+        return {}
+
     def op_crop_clip(self, a):
         self.call("crop_clip", {"clipId": arg_str(a, "clip"), **{k: arg_num(a, k) for k in ("x", "y", "width", "height")}})
         return {}
@@ -1974,11 +2002,13 @@ def self_test():
                  ("set_transform", {"clip": "c1", "scale": 0.5, "x": 0.25, "opacity": 0.6}),
                  ("crop_clip", {"clip": "c1", "x": 3, "y": 5, "width": 639, "height": 359}),
                  ("add_adjustment_layer", {"start_frame": 0, "frames": 30, "track": "v1"}),
+                 ("set_keyframes", {"clip": "c1", "property": "scale", "keyframes": [
+                     {"frame": 0, "value": 0.5}, {"frame": 29, "value": 1, "ease": "hold"}]}),
                  ("export", {"path": partial, "wait": True, "lossless": True})]
         results = [op(ad, n, a).get("result") for n, a in calls]
         expect("detect_key_colour ... export lossless: the batch 3b operations answer as PROTOCOL.md says",
-               results[:7] + [results[7].get("status") if results[7] else None],
-               [{"color": "0x808080", "confidence": 0.98}, {}, {}, {}, {}, {}, {"clip": "clip_adj"}, "done"])
+               results[:8] + [results[8].get("status") if results[8] else None],
+               [{"color": "0x808080", "confidence": 0.98}, {}, {}, {}, {}, {}, {"clip": "clip_adj"}, {}, "done"])
         expect("...and map to v0.2.0's tools (a mode passed on unchanged, shape none to null, lossless to quality 0)",
                [x for x in sent if x[0] != "timeline_summary"],
                [("detect_key_color", {"clipId": "c1"}), ("set_clip_blend_mode", {"clipId": "c1", "mode": "glow"}),
@@ -1987,16 +2017,27 @@ def self_test():
                 ("set_clip_transform", {"clipId": "c1", "x": 0.25, "scale": 0.5, "opacity": 0.6}),
                 ("crop_clip", {"clipId": "c1", "x": 3, "y": 5, "width": 639, "height": 359}),
                 ("add_adjustment_clip", {"startFrame": 0, "durationFrames": 30, "trackIndex": 2}),
+                ("set_keyframes", {"clipId": "c1", "property": "scale", "keyframes": [
+                    {"frame": 0, "value": 0.5}, {"frame": 29, "value": 1, "ease": "hold"}]}),
                 ("export_video", {"outputPath": partial, "quality": 0})])
         expect("set_mask or set_transform with no field, a mask number or flag of the wrong type, a crop without its "
-               "height, lossless that is not a boolean, an adjustment layer on a track that does not exist: bad_request",
+               "height, lossless that is not a boolean, an adjustment layer on a track that does not exist, keyframes "
+               "of another property, not a list, with a negative or fractional frame, a value that is not a number or "
+               "an ease of another name: bad_request",
                [op(adapter(look_reply), n, a)["error"]["code"] for n, a in (
                    ("set_mask", {"clip": "c1"}), ("set_transform", {"clip": "c1"}),
                    ("set_mask", {"clip": "c1", "w": "wide"}), ("set_mask", {"clip": "c1", "invert": 1}),
                    ("crop_clip", {"clip": "c1", "x": 0, "y": 0, "width": 9}),
                    ("export", {"path": partial, "lossless": "yes"}),
-                   ("add_adjustment_layer", {"start_frame": 0, "frames": 30, "track": "v9"}))],
-               ["bad_request"] * 7)
+                   ("add_adjustment_layer", {"start_frame": 0, "frames": 30, "track": "v9"}),
+                   ("set_keyframes", {"clip": "c1", "property": "volume", "keyframes": []}),
+                   ("set_keyframes", {"clip": "c1", "property": "x", "keyframes": {"frame": 0, "value": 1}}),
+                   ("set_keyframes", {"clip": "c1", "property": "x", "keyframes": [{"frame": -1, "value": 1}]}),
+                   ("set_keyframes", {"clip": "c1", "property": "x", "keyframes": [{"frame": 1.5, "value": 1}]}),
+                   ("set_keyframes", {"clip": "c1", "property": "x", "keyframes": [{"frame": 1, "value": "1"}]}),
+                   ("set_keyframes", {"clip": "c1", "property": "x",
+                                      "keyframes": [{"frame": 1, "value": 1, "ease": "bounce"}]}))],
+               ["bad_request"] * 13)
 
         def look_state(n, a):
             if n == "timeline_summary":

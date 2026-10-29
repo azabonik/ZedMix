@@ -12,7 +12,8 @@ b. Masks on a square red picture on v1 (fitted 360x360 in the middle of a 640x36
    anti-aliased edge, a feathered edge (graded, monotonic, and as wide as PROTOCOL's `feather` says: 90 % to 10 % of
    the clip across 0.3 of the picture's short side, centred on the line), the mask following the clip's transform and
    rotation, a mask with a blend mode, render_frame after a mask change, undo, clamping, and the refusals (a blend
-   mode on an adjustment layer, a mode the editor does not have).
+   mode on an adjustment layer, a mode the editor does not have). The mask on a clip whose scale is animated
+   (set_keyframes: the editor's other transform path) at the animation's two ends.
 c. A mask on a keyed clip (it multiplies the key, it does not undo it), on a clip with its own alpha, on an adjustment
    layer (the look only inside it), and a blend mode set on a clip joined by a transition (the whole run gets it).
 d. `add` leaves the frames before the layer and the picture outside it exactly as they were; a multiply clip's white
@@ -30,7 +31,7 @@ import edits
 
 PORT_BOUND = True
 TIMEOUT = 1500
-CHECKS = 100
+CHECKS = 104
 EXTRA_MEDIA = ("mk-bands.png", "mk-greys.png", "mk-blue.png", "mk-red.png", "mk-white.png", "mk-grey64.png",
                "mk-redsq.png", "mk-greenbox.png", "mk-disc.mkv")
 
@@ -171,6 +172,7 @@ def run(t):
     s = Shots(t, d)
     blend_modes(t, d, s, v1)
     masks(t, d, s, v1)
+    keyframed(t, d, s, v1)
     keyed_and_alpha(t, d, s, v1)
     blend_edges(t, d, s, v1)
 
@@ -407,6 +409,54 @@ def masks(t, d, s, v1):
     t.check("a blend mode on an adjustment layer is refused, nothing changes", ok, why)
     ok, why = edits.refused_unchanged(d, lambda: d.set_blend_mode(over, "glow"))
     t.check("a blend mode the editor does not have (glow) is refused, nothing changes", ok, why)
+
+
+def keyframed(t, d, s, v1):
+    """The mask on a clip whose scale is animated (set_keyframes): the circle (w, h 0.5) of the picture moved right by
+    a quarter of the canvas, its scale from 0.5 at its first frame to 1 at its last, over blue. At the first frame the
+    picture is 180 px wide around x 480 and the circle's radius 45 px; at the last 360 px (x 300 to the canvas's
+    edge) and 90 px. Outside the circle, inside the picture and beside it, the track below shows at both ends, and the
+    circle grows with the picture between them (the judge's proof that the editor animated the scale)."""
+    edits.clear(d)
+    blue, redsq = d.import_media(t.media("mk-blue.png")), d.import_media(t.media("mk-redsq.png"))
+    d.place_clip(blue, "v0", 0, 0, FPS)
+    clip = d.place_clip(redsq, v1, 0, 0, FPS)
+    d.set_mask(clip, shape="ellipse", w=0.5, h=0.5)
+    d.set_transform(clip, x=0.25)
+    d.set_keyframes(clip, "scale", [{"frame": 0, "value": 0.5}, {"frame": FPS - 1, "value": 1}])
+    s.export("keyframed")
+    p = C[0] + 160
+    for n, red, blue_at, what in (
+            (0, (p, p + 35), (p + 60, p + 120),
+             "at its first frame (scale 0.5): red at the circle's middle and 35 px right, blue 60 px right (outside "
+             "the 45 px circle, inside the picture) and 120 px right (beside the picture)"),
+            (FPS - 1, (p, p + 60, p + 75), (p + 110, 250),
+             "at its last frame (scale 1): red at the middle, 60 and 75 px right (the circle grew to 90 px), blue 110 "
+             "px right (outside it, inside the picture) and at x 250 (beside the picture)")):
+        def look(n=n, red=red, blue_at=blue_at):
+            f = s.pic("keyframed", at(n) if n else 0)
+            return [f.mean(x, C[1], 1) for x in red], [f.mean(x, C[1], 1) for x in blue_at]
+        t.measure(f"a mask on a clip whose scale is animated (set_keyframes, 0.5 to 1) moves and scales with it, the "
+                  f"track below showing outside it, {what}", look,
+                  lambda v: all(near(c, RED, 12) for c in v[0]) and all(near(c, BLUE, 12) for c in v[1]),
+                  "red, then blue, +- 12 a channel")
+    # The keyframes are one undo step (the clip is at its set scale, 1, from its first frame again; redo brings them
+    # back), and a locked track refuses them (product_error, nothing changes, the undo history kept:
+    # edits.refused_unchanged).
+    d.undo()
+    shot = s.render("keyframes-undone", 0)
+    d.redo()
+    again = s.render("keyframes-redone", 0)
+    t.measure("one undo takes the keyframes back: at its first frame the clip is at its set scale (1), the circle 90 "
+              "px (render_frame: red 60 px right of its middle, blue 110 px right); redo brings them back (blue 60 px "
+              "right again)",
+              lambda: [s.pic(n, 0).mean(x, C[1], 1) for n in (shot, again) for x in (p + 60, p + 110)],
+              lambda v: near(v[0], RED, 12) and near(v[1], BLUE, 12) and near(v[2], BLUE, 12) and near(v[3], BLUE, 12),
+              "red, blue; then blue, blue; +- 12 a channel")
+    d.set_track(v1, locked=True)
+    ok, why = edits.refused_unchanged(d, lambda: d.set_keyframes(clip, "scale", [{"frame": 0, "value": 0.3}]))
+    t.check("set_keyframes on a clip on a locked track: refused, nothing changes", ok, why)
+    d.set_track(v1, locked=False)
 
 
 def keyed_and_alpha(t, d, s, v1):

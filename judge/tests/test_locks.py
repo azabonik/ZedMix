@@ -26,8 +26,9 @@ A refusal is observed as: the editor answers product_error (a bad_request is the
 the editor's refusal), get_state is the same as before, and the undo history is kept: a marker set and undone just
 before must come back with redo (an edit that made an undo step would have dropped it), and undo then gives the same
 State again (edits.refused_unchanged). The State does not hold a clip's colours, so a change of the card's look
-(apply_colour, apply_lut) is also held to its colours: render_frame at the card's middle shows the same colours after
-the refusal as before (and after the unlock the same change shows); these renders come after the checks on files left.
+(apply_colour, apply_lut, set_transform's opacity) is also held to its colours: render_frame at the card's middle
+shows the same colours after the refusal as before (and after the unlock the same change shows); these renders come
+after the checks on files left.
 The colour comparison guards one case only: a change that is refused but still shows. A change that is accepted is
 caught by the refusal part (no product_error, and the undo history no longer as before), and refused_unchanged's own
 undo steps have taken it back before the colours are read.
@@ -52,7 +53,9 @@ LOOKS = [("apply_colour with a grade (brightness, contrast, saturation, gamma)",
           lambda d, t, c: d.apply_colour(c, brightness=0.1, contrast=1.3, saturation=0.2, gamma=1.4)),
          ("apply_colour with adjustments (temperature, tint, hue)",
           lambda d, t, c: d.apply_colour(c, temperature=-0.8, tint=0.6, hue=90)),
-         ("apply_lut (a look-up table that swaps red and blue)", lambda d, t, c: d.apply_lut(c, t.media("look.cube")))]
+         ("apply_lut (a look-up table that swaps red and blue)", lambda d, t, c: d.apply_lut(c, t.media("look.cube"))),
+         ("set_transform with opacity 0.3 (over the empty track below: darker)",
+          lambda d, t, c: d.set_transform(c, opacity=0.3))]
 BLOCKS = [(20, 40), (150, 40)]   # (x, y) of a block in the card's red half and one in its blue half
 CARD_AT = 135 / FPS              # the card's middle
 CHECKS = 8 + 1 + len(LOOKS) + 7 + 3 + 3 + 7 + 2 + 1 + 1 + 1

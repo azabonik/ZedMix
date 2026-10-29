@@ -41,6 +41,10 @@ TEXT_STYLE = {"color": "#c0ffee", "box": True, "box_color": "#0a0b0c99", "box_bo
 GRADE = {"brightness": 0.0123, "contrast": 1.0123, "saturation": 1.0234, "gamma": 1.0345}
 COLOUR = {"temperature": 0.123, "tint": -0.0456, "hue": 7.89}
 BLUR, VIGNETTE, SIMILARITY, BLEND, SPEED = 2.345, 0.4567, 0.1234, 0.0567, 1.25
+TRANSFORM = {"x": 0.0321, "scale": 0.9321, "opacity": 0.8321}
+MASK = {"w": 0.8432, "h": 0.7432, "feather": 0.0432}
+KEYFRAMES = [{"frame": 0, "value": 0.9543}, {"frame": 40, "value": 0.7543}]
+RAMP = [(0, 1), (1.0, 1.75)]  # (source s, speed)
 
 
 def shape(st):
@@ -49,6 +53,14 @@ def shape(st):
             "tracks": [(tr.get("track"), [(c.get("start_frame"), c.get("in_frame"), c.get("out_frame"),
                                            c.get("length_frames"), c.get("speed")) for c in tr.get("clips", [])])
                        for tr in st.get("tracks", [])]}
+
+
+def looks(st):
+    """Each track's clips' blend mode, mask, whether it is an adjustment layer, effects (without their ids), whether it
+    has a speed ramp, and the transition into it."""
+    return [[(c.get("blend_mode"), c.get("mask"), c.get("adjustment"),
+              [{k: v for k, v in e.items() if k != "id"} for e in c.get("effects") or []], c.get("ramp"),
+              c.get("transition")) for c in tr.get("clips", [])] for tr in st.get("tracks", [])]
 
 
 def run(t):
@@ -272,15 +284,35 @@ def body(t, canary):
     d.apply_effect(cl, "vignette", amount=VIGNETTE)
     d.apply_effect(cl, "chromakey", params={"similarity": SIMILARITY, "blend": BLEND})
     d.set_speed(cl, SPEED)
+    # The fields of batch 3a's and 3b's operations: a crop, a transform with opacity, keyframed opacity, a blend mode,
+    # a feathered mask, a second clip with a speed ramp entered by a dissolve, and an adjustment layer with an effect
+    # on a track above. get_state shows the blend mode, the mask, the ramp, the transition, the layer and every
+    # clip's effects; the crop, the transform and the keyframes show in the frame rendered after the load.
+    sw, sh, _ = observe.size(src)
+    d.crop_clip(cl, 8, 6, sw - 24, sh - 18)
+    d.set_transform(cl, **TRANSFORM)
+    d.set_keyframes(cl, "opacity", KEYFRAMES)
+    d.set_blend_mode(cl, "screen")
+    d.set_mask(cl, shape="ellipse", **MASK)
+    second = d.place_clip(d.clips("v0")[0]["asset"], "v0", 48, 0, 60)
+    d.set_speed_ramp(second, points=RAMP)
+    d.set_transition(second, "dissolve", 10)
+    adj = d.add_adjustment_layer(0, 30, track=d.add_track("video"))
+    d.apply_effect(adj, "sepia")
     full = t.path("projects", "full.aive")
     f1, f2 = t.path("out", "full-1.png"), t.path("out", "full-2.png")
     d.render_frame(0.5, f1)
-    before = shape(d.get_state())
+    before = shape(d.get_state()), looks(d.get_state())
     d.save_project(full)
     d.load_project(legit)
     d.load_project(full)
-    t.check("a project using colour, effects, a LUT, text and speed saves and loads unchanged",
-            shape(d.get_state()) == before, shape(d.get_state()))
+    after = shape(d.get_state()), looks(d.get_state())
+    t.check("a project using colour, effects, a LUT, text, speed, a crop, a transform with opacity, keyframes, a blend "
+            "mode, a mask, a speed ramp, a transition and an adjustment layer saves and loads unchanged (get_state: "
+            "the clips, their effects, blend modes, masks, ramps and transitions, the layer)",
+            after == before and any(c[2] is True for tr in before[1] for c in tr)
+            and any(c[0] == "screen" and isinstance(c[1], dict) for tr in before[1] for c in tr)
+            and any(c[4] is True and c[5] for tr in before[1] for c in tr), after)
     d.render_frame(0.5, f2)
     t.measure("…and renders the same frame after the load", lambda: observe.ssim(f1, f2), lambda v: v >= 0.99,
               "SSIM >= 0.99")

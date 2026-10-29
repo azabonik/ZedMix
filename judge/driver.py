@@ -387,6 +387,12 @@ class Driver:
         """Places the clip's picture: x, y (canvas fractions), scale, rotation (degrees), opacity; only those given."""
         return self.request("set_transform", {"clip": clip, **fields})
 
+    def set_keyframes(self, clip, prop, keyframes):
+        """Animates one transform property of the clip ("x", "y", "scale", "rotation", "opacity"): `keyframes`
+        [{"frame": clip-local frame, "value", "ease"?}] replace that property's keyframes (an empty list removes
+        them; PROTOCOL.md, "Compositing")."""
+        return self.request("set_keyframes", {"clip": clip, "property": prop, "keyframes": list(keyframes)})
+
     def crop_clip(self, clip, x, y, width, height):
         """Crops the clip's picture to a rectangle of its source pixels."""
         return self.request("crop_clip", {"clip": clip, "x": x, "y": y, "width": width, "height": height})
