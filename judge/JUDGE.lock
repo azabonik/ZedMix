@@ -2,7 +2,7 @@
 # .github/workflows/judge.yml, sorted by path from the repository root (scripts/check-judge-lock.mjs).
 # The agents that rewrite the editor must not change the judge. The gauntlet reviews a change to this file on its PR.
 56ffaefe1bb97981a6cf275e4bf8af79cd32f79b5b01e05856ad83dff279e2c4  .github/workflows/judge.yml
-c4b5d5079809f1495e3ca146ed70d6d1e67fb6381e2b8c9f49a9fdb013851d9c  judge/PORTING.md
+f144b4d98918f2ccaa8fc027f49c4174e615f1f861938349becbb9a59e4e07df  judge/PORTING.md
 11fecb74e8f2827118581cb03dd1504e69831fb341d679961cb813ec3704d809  judge/PROTOCOL.md
 3e23f033e23a10ead2e5147c16c3b8eac0d52a961eca6351d8d86041dd62cc3a  judge/README.md
 dc5794dc01099596813bd8e31c75532b043e86b4fa956a29890348c9d6e3789a  judge/adapters/v020/adapter.py
@@ -28,7 +28,7 @@ c623a4a816d704ae2318996eb9aedf67c07c8306d3d47eb073ea5ae15279b7cd  judge/fixtures
 4eb1b97f162fcdff287aa7c3d84a53aeeacec2ba67ed9a39390f4cb3ddd75f31  judge/observe.py
 2718005ee5bee298224b0261dc556dbc6807be11377600b6cec980609ca9a24e  judge/run.py
 3779f59fa128125e0518da4966349398787ff842a006a8501807965fdcc443ca  judge/selftest.py
-c92b6e60f6b9b80104264f9828cf763fb3fd7cefb62745392d54274edb296dc9  judge/tests/test_audio_effects.py
+4cf18c97e6a9e272145bb7301f70d53459a4e88eda558f1c088814e77fc549d0  judge/tests/test_audio_effects.py
 16c4f1e9457f09ff89dd6ea4da46664145ceca042ae6507e91360f44f4b65ac5  judge/tests/test_audio_layouts.py
 1b6dd772f791008cebb285c957d21d06a4a4b70e7ba67ecb9006d5fd68c8dc48  judge/tests/test_bleeps.py
 93e86a8a5ca44ecbbfaeccb797801b591e2df33d3ebb92bb9b9d8bafda8c7241  judge/tests/test_cli_migrate.py

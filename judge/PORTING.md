@@ -499,7 +499,7 @@ Each bound and the values the four runs (this tree and v0.2.0, each with FFmpeg 
 | bleeps: the preview's turned-down beep | 0.3 to 0.7 of the export's | 0.50 (9.0), 0.52 (4.4) | 0.4 set on a 0.8 beep: 0.5 by amplitude; the bounds admit another gain law |
 | audio effects: onset against the dry tone | within 25 ms (the original's) | -13.4 ms (robot, 15 % threshold) to +15.2 ms (noise_reduction on 4.4) | the original's |
 | audio effects: delay on the voice | at most 6 ms (the original's) | 0.0 ms for most, telephone +1.4, megaphone -0.6; underwater +5.8 | underwater is not measured (its wobble moves the delay by design: 0.2 ms of room); the rest have 4.6 ms or more |
-| audio effects: under a bleep, the pitched source | under 0.01 and under 1/30 of the pitched steps' mean level outside the bleeps, read over a Hann window | 0.00000 and 0.00007 to 0.00009; the level outside 0.094 (9.0.2-17) and 0.182 (4.4), so the second bound is 0.0031 and 0.0061 | repair round 1: over a plain window the bound was 0.03 and read 0.0017 and 0.016, the 0.016 being the 1 kHz beep's spill into the 960 Hz step (a plain DFT bin lets a tone 40 Hz away through at about 3 %), so a mutation that only turned the pitched sound down 20 dB under a bleep (0.019 on 9.0.2-17) passed; the original (bound 0.01) caught it. A Hann window reads the spill as under 0.0001 and weighs a shifter's smear at the window's ends little; the ratio holds the bound on an FFmpeg whose shifter plays quieter. Not muted reads the pitched level itself |
+| audio effects: under a bleep, the pitched source | under 0.01 and under 1/30 of the pitched steps' mean level outside the bleeps, read over a Hann window | 0.00000 and 0.00009 to 0.00028; the level outside 0.138 (9.0.2-17) and 0.203 (4.4), so the second bound is 0.0046 and 0.0068 | repair round 1: over a plain window the bound was 0.03 and read 0.0017 and 0.016, the 0.016 being the 1 kHz beep's spill into the 960 Hz step (a plain DFT bin lets a tone 40 Hz away through at about 3 %), so a mutation that only turned the pitched sound down 20 dB under a bleep (0.019 on 9.0.2-17) passed; the original (bound 0.01) caught it. A Hann window reads the spill as under 0.0001 and weighs a shifter's smear at the window's ends little; the ratio holds the bound on an FFmpeg whose shifter plays quieter. Each step is read at the loudest frequency within 1 % of its octave (a shifter may land a few Hz off: 1074 Hz for 1080 with FFmpeg 4.4, where a 0.3 s Hann window reads a seventh of the level), but none within 60 Hz of the beep: with FFmpeg 4.4 the export carries 0.007 at 968 Hz under the 1 kHz beep, so the 960 Hz step is read at 960 Hz only (the first window, 660 and 720 Hz, is far from it). Not muted reads the pitched level itself |
 | audio effects: the preview pitched -12 | 220 Hz within 1.5 % | 220.0 | a staircase (steps of 0.5 s) read 4 % off in the preview's lower quality, so the preview is judged on a steady tone |
 | voice: noise_reduction | floor down 10 dB, speech within 1.5 dB, quiet speech down at most 3 dB | 11.0 to 13.2 dB; -0.5 to -0.8 dB; -2.3 to -2.7 dB | the original's; the floor of the original's voice (-50 dB pink) is the same, its quiet speech too |
 | voice: de_esser, compressor, limiter | 3 dB; 6 dB; at most 0.01 % of the limited clip's samples (57 of 576000) over -5.5 dBFS, the peak at most -3.5 dBFS and speech up 3 dB | 14.3 dB; 17.1 to 17.2 dB; 1 to 3 samples, -5.2 to -5.1 dBFS and +5.4 dB | the original's, but for the limiter's ceiling (repair round 1): the original reads the limiter's own PCM output (v0.2.0-only) and its export only to -3.5 dBFS, so a limiter holding -4.5 dB instead of -6 (export peak -4.1) passed the judge. The codec lifts a few limited peaks over the ceiling (v0.2.0's highest sample -5.1; FFmpeg's lookahead limiter at -6 dB, coded the same way, -4.8 on 9.0.2-17), so the single highest sample cannot hold the ceiling tighter; the count of samples over -5.5 dBFS can: 0 to 3 for v0.2.0 and for FFmpeg's limiter at -6 dB (two attack/release settings, both FFmpegs), 1700 to 2000 for that limiter at -4.5 dB |
@@ -517,16 +517,18 @@ check above now fails them (the margins table has the numbers):
 
 | Mutation | Original | Judge before | Judge now |
 |---|---|---|---|
-| one built-in sound (the squeak) plays at a fifth of its level | fails (its peak 0.18) | passed: only "heard over 0.03" (0.075) | "the squeak sound is heard in its bleep, over the muted source, peaking at half of full scale or more": its peak about 0.14, under 0.4 |
-| on a clip with an audio effect, a bleep turns the clip's sound down 20 dB instead of muting it | fails (0.012 and 0.016 over 0.01) | passed: 0.019 under 0.03 | "under the bleeps the pitched sound is muted, the beep plays unprocessed at 1 kHz": a tenth of the pitched level is over 1/30 of it on either FFmpeg, and 0.019 is over 0.01 |
-| the limiter's ceiling is 1.5 dB high (-6 behaves as -4.5) | fails (its PCM check: -4.5 against -5.9; its export check passed) | passed: export peak -4.1 under -3.5 | "the limiter holds its -6 dB ceiling in the export ...": a -4.5 dB ceiling puts 1700 to 2000 samples over -5.5 dBFS, the bound is 57 |
+| one built-in sound (the squeak) plays at a fifth of its level | fails (its peak 0.18) | passed: only "heard over 0.03" (0.075) | "the squeak sound is heard in its bleep, over the muted source, peaking at half of full scale or more": peak 0.139, under 0.4 (both FFmpegs) |
+| on a clip with an audio effect, a bleep turns the clip's sound down 20 dB instead of muting it | fails (0.012 and 0.016 over 0.01) | passed: 0.019 under 0.03 | "under the bleeps the pitched sound is muted, the beep plays unprocessed at 1 kHz": 0.020 and 0.013 against 0.0049 (9.0.2-17), 0.018 and 0.008 against 0.0074 (4.4) |
+| the limiter's ceiling is 1.5 dB high (-6 behaves as -4.5) | fails (its PCM check: -4.5 against -5.9; its export check passed) | passed: export peak -4.1 under -3.5 | "the limiter holds its -6 dB ceiling in the export ...": 1837 (9.0.2-17) and 1984 (4.4) samples over -5.5 dBFS, the bound is 57 |
 
-The mutated builds were gone when these checks were written, so the "now" column is measured on stand-ins: the
-squeak's peak scaled from the mutation's reported level, the turned-down mute's leak from its reported reading and
-the pitched level on each FFmpeg, and the high ceiling as FFmpeg's own lookahead limiter at -4.5 dB on the judge's
-voice with +6 dB of drive, coded as AAC (both FFmpegs). The layouts' bleep cases still check only that the beep is
-heard (their voice-like sources have no single tone to read under the bleep); the muting under an effect is judged
-in test_audio_effects.
+The mutated builds were gone when these checks were written, so the "now" column is measured with lying adapters
+that make each mutation through the real editor (the table below): one that sends the squeak's bleeps at volume 0.16
+(a fifth of 0.8), one that sends the limiter a ceiling 1.5 dB higher than asked, and one that, for each export, puts
+a copy of every clip that has bleeps and an audio effect on a new sound track at volume 0.1 with the same effects
+(the clip's processed sound at -20 dB under its bleeps) and removes it after the export. Each reads what the
+mutator reported (0.075 heard besides the source; peak -4.1 dBFS; 0.019 to 0.020 under the first bleep). The
+layouts' bleep cases still check only that the beep is heard (their voice-like sources have no single tone to read
+under the bleep); the muting under an effect is judged in test_audio_effects.
 
 ### Which earlier file could stand in for each export
 
@@ -617,5 +619,8 @@ failed, of the test's checks with the runner's four).
 | hands in the last export as the preview | 2 of 62 | 2 of 142 | - | - | - |
 | answers apply_audio_effect and enhance_voice without asking the editor | - | fails (it stops at the first reorder; before that, every get_state tie fails) | 24 of 35 | 20 of 26 | - |
 | answers a change of an audio effect (effect_id) without asking the editor | - | 3 of 142 | - | - | - |
+| sends the squeak's bleeps at a fifth of their volume (repair round 1) | 1 of 62 | - | - | - | - |
+| puts the processed sound of a clip with bleeps and an effect under its bleeps at -20 dB (repair round 1) | - | 1 of 142 | - | - | - |
+| sends the limiter a ceiling 1.5 dB higher than asked (repair round 1) | - | - | 1 of 35 | - | - |
 | serves the first /peaks answer for a path again (no recomputation) | - | - | - | - | 6 of 19 |
 | serves every /peaks level as 1 (the wrong channel's shape) | - | - | - | - | 6 of 19 |

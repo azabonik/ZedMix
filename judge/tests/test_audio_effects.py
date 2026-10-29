@@ -66,7 +66,7 @@ SLOT = 4.5           # each clip of onset.mkv (4 s) and the 0.5 s gap after it
 VSLOT = 4.0          # each clip of voice.mkv's first phrase (3.5 s) and the gap after it
 # Under a bleep the clip's pitched sound must be at most MUTED_PITCHED (the original's bound; it plays at 0.25) and at
 # most MUTED_RATIO of the pitched steps' level heard outside the bleeps (that level depends on the FFmpeg: a mean of
-# 0.09 with 9.0.2-17, 0.18 with 4.4; a bleep that only turns the sound down 20 dB leaves a tenth of it, v0.2.0 leaves
+# 0.14 with 9.0.2-17, 0.20 with 4.4; a bleep that only turns the sound down 20 dB leaves a tenth of it, v0.2.0 leaves
 # 0.0001 or less). Both are read over a Hann window (observe.tone_amp_hann): over a plain one the 1 kHz beep spills
 # about 0.016 into the 960 Hz step the second window is measured at, and a shifter's smear of the steps before the
 # window weighs little at its ends (PORTING.md, "batch 4" margins).
@@ -335,14 +335,21 @@ def bleeps(t, d, bleep, onset):
         t.check("elsewhere the sound is pitched +12 (each step heard an octave up); the bypassed -5 is not heard",
                 False, snd)
     else:
+        def near(a, b, f):
+            # A shifter may land a step a few Hz off its octave (FFmpeg 4.4: 1074 Hz for 1080), where a Hann window
+            # over 0.3 s reads little: the loudest reading within 1 % of it, in 1 Hz steps, but none within 60 Hz of
+            # the 1 kHz beep (with FFmpeg 4.4 the export has some 0.007 at 968 Hz under the beep), so the 960 Hz step
+            # is read at 960 Hz only.
+            ks = [k for k in range(-int(f / 100), int(f / 100) + 1) if abs(f + k - 1000) >= 60] or [0]
+            return max(observe.tone_amp_hann(snd, a, b, f + k) for k in ks)
+
         vals = []
         for a, b in ((0.94, 1.48), (2.94, 3.38)):
-            vals.append((max(observe.tone_amp_hann(snd, a + 0.05, b - 0.05, 2 * (300 + 30 * int(2 * x)))
-                             for x in (a, b)),
+            vals.append((max(near(a + 0.05, b - 0.05, 2 * (300 + 30 * int(2 * x))) for x in (a, b)),
                          observe.tone_amp(snd, a + 0.05, b - 0.05, 1000),
                          observe.tone_amp(snd, a + 0.05, b - 0.05, 2000)))
         # The pitched steps' level outside the bleeps (each step an octave up, 0.3 s of it).
-        refs = [observe.tone_amp_hann(snd, a, a + 0.3, 2 * (300 + 30 * int(2 * a))) for a in (0.55, 1.6, 2.1, 4.1)]
+        refs = [near(a, a + 0.3, 2 * (300 + 30 * int(2 * a))) for a in (0.55, 1.6, 2.1, 4.1)]
         ref = sum(refs) / len(refs)
         t.check("under the bleeps the pitched sound is muted, the beep plays unprocessed at 1 kHz",
                 ref > 0.02 and all(p < MUTED_PITCHED and p < ref * MUTED_RATIO and k > 0.1 and k2 < 0.01
