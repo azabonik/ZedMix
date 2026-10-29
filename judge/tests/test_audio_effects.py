@@ -15,10 +15,11 @@ bleep.mp4 (a staircase tone that says its source moment, as in test_bleeps). The
 What is heard is measured on the exports' sound (observe.samples): the onset (the first sample at a quarter of the
 clip's loudest, 15 % for robot, whose buzz starts softer), the level near the clip's end and in the gap after it, the
 delay of the voice against the dry voice (the peak of their cross-correlation at 8 kHz over 1 s of speech, within
-+-25 ms), and a pure tone's frequency (observe.dominant) and amplitude (observe.tone_amp). The bounds are the original's:
-the onset within 25 ms of the dry one, the delay at most 6 ms (not measured on underwater, whose wobble moves it). An
-effect that changes nothing passes the onset and length checks, as in the original, so each effect is also held to
-get_state (it is on its clip, with the values sent), and test_voice measures what the effects do.
++-25 ms), and a pure tone's frequency (observe.dominant) and amplitude (observe.tone_amp; observe.tone_amp_hann where a
+loud tone is near). The bounds are the original's: the onset within 25 ms of the dry one, the delay at most 6 ms (not
+measured on underwater, whose wobble moves it). An effect that changes nothing passes the onset and length checks,
+as in the original, so each effect is also held to get_state (it is on its clip, with the values sent), and test_voice
+measures what the effects do.
 
 Every check is recorded on every path (a check whose input is missing fails with the reason), so CHECKS is exact.
 """
@@ -63,10 +64,14 @@ EFFECTS = {
 RETIMES = {"pitch", "chipmunk", "deep", "robot", "underwater"}
 SLOT = 4.5           # each clip of onset.mkv (4 s) and the 0.5 s gap after it
 VSLOT = 4.0          # each clip of voice.mkv's first phrase (3.5 s) and the gap after it
-# Under a bleep the clip's pitched sound must be at most this (it plays at 0.25: 18 dB down). A pitch shifter smears
-# its input over tens of milliseconds, so the steps on either side of the window leak into it: v0.2.0 shows 0.002 and
-# 0.016 (PORTING.md, "batch 4" margins).
-MUTED_PITCHED = 0.03
+# Under a bleep the clip's pitched sound must be at most MUTED_PITCHED (the original's bound; it plays at 0.25) and at
+# most MUTED_RATIO of the pitched steps' level heard outside the bleeps (that level depends on the FFmpeg: a mean of
+# 0.09 with 9.0.2-17, 0.18 with 4.4; a bleep that only turns the sound down 20 dB leaves a tenth of it, v0.2.0 leaves
+# 0.0001 or less). Both are read over a Hann window (observe.tone_amp_hann): over a plain one the 1 kHz beep spills
+# about 0.016 into the 960 Hz step the second window is measured at, and a shifter's smear of the steps before the
+# window weighs little at its ends (PORTING.md, "batch 4" margins).
+MUTED_PITCHED = 0.01
+MUTED_RATIO = 1 / 30
 CHECKS = 4 + 1 + 3 * len(EFFECTS) + (len(EFFECTS) - len(RETIMES)) + len(EFFECTS) + 11 + 8 + 4
 
 
@@ -332,14 +337,20 @@ def bleeps(t, d, bleep, onset):
     else:
         vals = []
         for a, b in ((0.94, 1.48), (2.94, 3.38)):
-            vals.append((max(observe.tone_amp(snd, a + 0.05, b - 0.05, 2 * (300 + 30 * int(2 * x)))
+            vals.append((max(observe.tone_amp_hann(snd, a + 0.05, b - 0.05, 2 * (300 + 30 * int(2 * x)))
                              for x in (a, b)),
                          observe.tone_amp(snd, a + 0.05, b - 0.05, 1000),
                          observe.tone_amp(snd, a + 0.05, b - 0.05, 2000)))
+        # The pitched steps' level outside the bleeps (each step an octave up, 0.3 s of it).
+        refs = [observe.tone_amp_hann(snd, a, a + 0.3, 2 * (300 + 30 * int(2 * a))) for a in (0.55, 1.6, 2.1, 4.1)]
+        ref = sum(refs) / len(refs)
         t.check("under the bleeps the pitched sound is muted, the beep plays unprocessed at 1 kHz",
-                all(p < MUTED_PITCHED and k > 0.1 and k2 < 0.01 for p, k, k2 in vals),
-                "; ".join(f"pitched source {p:.4f} (under {MUTED_PITCHED}), 1 kHz {k:.3f} (over 0.1), "
-                          f"2 kHz {k2:.4f}" for p, k, k2 in vals))
+                ref > 0.02 and all(p < MUTED_PITCHED and p < ref * MUTED_RATIO and k > 0.1 and k2 < 0.01
+                                   for p, k, k2 in vals),
+                "; ".join(f"pitched source {p:.5f} (under {MUTED_PITCHED} and under 1/30 of the pitched level "
+                          f"outside, {ref * MUTED_RATIO:.5f}), 1 kHz {k:.3f} (over 0.1), 2 kHz {k2:.4f}"
+                          for p, k, k2 in vals)
+                + f"; the pitched steps outside the bleeps {', '.join(f'{r:.3f}' for r in refs)} (mean over 0.02)")
         want = [2 * (300 + 30 * int(2 * a)) for a in (1.6, 2.1, 4.1)]
         hz = [observe.dominant(snd, a, a + 0.3, w * 0.9, w * 1.1) for a, w in zip((1.6, 2.1, 4.1), want)]
         t.check("elsewhere the sound is pitched +12 (each step heard an octave up); the bypassed -5 is not heard",

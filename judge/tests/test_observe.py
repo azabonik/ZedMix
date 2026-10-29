@@ -10,7 +10,9 @@ substitution, the marker search and the secret search) and the colour instrument
 differences, the readings) are checked on inputs made here, and the edit tests' refusal
 check (edits.refused_unchanged) on a model of an editor's undo history.
 """
+import array
 import json
+import math
 import os
 import socket
 
@@ -20,7 +22,7 @@ import observe
 
 PORT_BOUND = False
 TIMEOUT = 300
-CHECKS = 44
+CHECKS = 45
 
 
 def run(t):
@@ -59,6 +61,15 @@ def run(t):
               lambda v: v is None or v < -80, "< -80 dB")
     t.measure("last 0.2 s of gap.m4a", lambda: observe.tail_level(gap, 0.2), lambda v: v > -30, "> -30 dB")
     t.measure("loudness of gap.m4a", lambda: observe.loudness(gap), lambda v: -30 < v < -15, "-30 to -15 LUFS")
+    # A quiet 960 Hz tone (0.002) under a loud 1 kHz one (0.7), 0.34 s at 48 kHz: the Hann reading finds the quiet
+    # one; a plain DFT bin reads the loud one's spill there (about 0.02).
+    mix = array.array("f", (0.7 * math.sin(2 * math.pi * 1000 * i / 48000) + 0.002 * math.sin(2 * math.pi * 960 * i
+                                                                                                / 48000 + 1.0)
+                            for i in range(int(0.34 * 48000))))
+    hn, rect = observe.tone_amp_hann(mix, 0, 0.34, 960, 48000), observe.tone_amp(mix, 0, 0.34, 960, 48000)
+    t.check("tone_amp_hann reads a quiet tone 40 Hz from a loud one (and a plain DFT bin does not)",
+            abs(hn - 0.002) < 0.0004 and abs(observe.tone_amp_hann(mix, 0, 0.34, 1000, 48000) - 0.7) < 0.01
+            and rect > 0.005, f"Hann {hn:.5f} (0.002), plain {rect:.5f}")
 
     srt = t.path("side", "c.srt")
     with open(srt, "w", encoding="utf-8") as f:

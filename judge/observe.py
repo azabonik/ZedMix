@@ -796,6 +796,24 @@ def tone_amp(s, t0, t1, freq, rate=RATE):
     return 2 * math.hypot(re, im) / n
 
 
+def tone_amp_hann(s, t0, t1, freq, rate=RATE):
+    """As tone_amp, over a Hann window: a quiet tone a few tens of Hz from a loud one is read without the loud one's
+    spill (a plain DFT bin lets a tone 40 Hz away through at about 3 % of its amplitude over 0.25 s; the Hann window
+    at well under 0.1 %), and the window's ends weigh little. 0.0 where there are fewer than 2 samples."""
+    i0, i1 = max(0, int(round(t0 * rate))), min(len(s), int(round(t1 * rate)))
+    n = i1 - i0
+    if n < 2:
+        return 0.0
+    w, k = 2 * math.pi * freq / rate, 2 * math.pi / (n - 1)
+    re = im = g = 0.0
+    for i, v in enumerate(s[i0:i1]):
+        h = 0.5 - 0.5 * math.cos(k * i)
+        g += h
+        re += v * h * math.cos(w * i)
+        im -= v * h * math.sin(w * i)
+    return 2 * math.hypot(re, im) / g
+
+
 def dominant(s, t0, t1, lo, hi, rate=RATE):
     """The strongest frequency (Hz) between `lo` and `hi` Hz in samples `s` over [t0, t1) s: the peak of a
     Hann-windowed DFT scanned in 1 Hz steps and then 0.1 Hz steps around the best; None where there are no samples."""

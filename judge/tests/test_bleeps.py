@@ -4,10 +4,10 @@ hides it and a trim back shows it again, a split leaves each half its own bleep,
 lasts its window halved, an audio slip moves it; set_bleep nudges, refuses an empty window, keeps the shortest window
 and the asset's end; add_bleep takes source or timeline seconds and refuses a moment outside the clip, a quack plays its
 natural length; remove_bleep and remove_bleeps, each one undo step; clear_effects keeps the bleeps; a muted track
-silences its bleeps too; bleeps survive save and load; every built-in sound is heard and does not clip; the preview
-mixes the bleeps; bleep_words with no transcript bleeps nothing. Port of packages/core/scripts/smoke-bleep.ts
-(judge/PORTING.md has the map of its sections: the profanity matcher and the transcript-driven sections stay with
-v0.2.0).
+silences its bleeps too; bleeps survive save and load; every built-in sound is heard, peaks at half of full scale or
+more and does not clip; the preview mixes the bleeps; bleep_words with no transcript bleeps nothing. Port of
+packages/core/scripts/smoke-bleep.ts (judge/PORTING.md has the map of its sections: the profanity matcher and the
+transcript-driven sections stay with v0.2.0).
 
 Media: bleep.mp4 (320x180 30 fps, 8 s), whose sound is a staircase tone that says its source moment: 300 + 30 k Hz for
 k = floor(2 t), amplitude 0.25 (fixtures/make.sh). So the judge knows which source moment plays at each moment of an
@@ -42,6 +42,10 @@ B2 = (2.94, 3.38)
 SOUNDS = ["beep", "quack", "squeak", "boing", "honk"]
 LOUD, MUTED = 0.1, 0.008      # the source's step tones: heard / muted (it plays at 0.25)
 BEEP, NO_BEEP = 0.1, 0.005    # the beep's 1 kHz: heard / not heard
+# Each built-in sound peaks at more than half of full scale (the original's bound on the sound itself), so at the
+# default volume 0.8 its bleep peaks over 0.4 in the export, where the source is muted (v0.2.0: 0.64 to 0.71; a sound
+# played at a fifth of its level: 0.14).
+SOUND_PEAK = 0.4
 
 
 def step(src_t):
@@ -170,15 +174,18 @@ def sounds(t, d, A, m0):
         d.add_bleep(A, start=a, end=b, sound=s)
     snd = export(t, d, "sounds")
     for (a, b), s in zip(wins, SOUNDS):
+        name = f"the {s} sound is heard in its bleep, over the muted source, peaking at half of full scale or more"
         if isinstance(snd, str):
-            t.check(f"the {s} sound is heard in its bleep, over the muted source", False, snd)
+            t.check(name, False, snd)
             continue
         f = step(a)
         src = observe.tone_amp(snd, a + 0.03, b - 0.03, f, RATE)
         res = observe.residual_rms(snd, a + 0.05, b - 0.05, [f], RATE)
-        t.check(f"the {s} sound is heard in its bleep, over the muted source", res > 0.03 and src < 0.02,
+        pk = observe.peak(snd, a + 0.03, b - 0.03, RATE)
+        t.check(name, res > 0.03 and src < 0.02 and pk > SOUND_PEAK,
                 f"[{a},{b}]: what is heard besides the source {res:.3f} (over 0.03), the source's {f} Hz {src:.4f} "
-                f"(under 0.02: a sound may have some energy there itself)")
+                f"(under 0.02: a sound may have some energy there itself), the peak {pk:.3f} (over {SOUND_PEAK}: "
+                f"half of full scale at the default volume 0.8)")
     top = "no sound" if isinstance(snd, str) else observe.peak(snd)
     t.check("no built-in sound clips (the export's peak stays under full scale)",
             not isinstance(snd, str) and top < 0.99, f"peak {top if isinstance(top, str) else round(top, 3)}")
