@@ -395,7 +395,6 @@ A clip's sound: its level, its slide against its picture, its bleeps and its aud
 | `remove_bleeps` | `{"clips"?: [id]}` | `{}`: removes every bleep of the clips (every clip when `clips` is left out). One undo step. |
 | `get_transcript` | `{"asset"}` | `{"words": [{"text", "start", "end"}] or null}`: the asset's word-level transcript (source seconds), or null when the editor has none. In a test the editor has no speech model (rule 4), so it has none unless it can make one without a download. |
 | `bleep_words` | `{"clips"?: [id], "words"?: [str], "use_default_list"?: bool, "include_mild"?: bool, "sound"?, "dry_run"?: bool}` | `{"hits": [{"clip", "bleep", "text", "start", "end"}]}`: bleeps every swear word of the clips' transcripts (a built-in list, `include_mild` adding mild words, `words` adding the user's own, `use_default_list` false using only those), each as a bleep on the clip that carries the asset's sound, its window the word's padded a little; re-running replaces the clips' bleeps; `dry_run` true only reports the hits and changes nothing. One undo step. Errors: `product_error` when a clip's asset has no transcript and none can be made (no speech model: rule 4); nothing is changed then. |
-| `clean_up_storage` | `{}` | `{}`: the user's storage clean-up, run now (the editor's own files it no longer needs are moved away; nothing the project uses). |
 
 #### Audio effects
 

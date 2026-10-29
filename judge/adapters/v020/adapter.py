@@ -1616,10 +1616,6 @@ class Adapter:
         return {"effect": j.get("effectId") if isinstance(j.get("effectId"), str) else None,
                 "clip": j.get("clipId") if isinstance(j.get("clipId"), str) else None}
 
-    def op_clean_up_storage(self, a):
-        self.call("clean_up_storage", {})
-        return {}
-
     # ------------------------------------------------------------ what an agent has
     def _tools(self):
         if self.mcp is None:
@@ -2048,13 +2044,12 @@ def self_test():
              op(ad, "remove_audio_effect", {"clip": "c1", "effect": "afx_1"}),
              op(ad, "reorder_audio_effect", {"clip": "c1", "effect": "afx_1", "to_index": 2}),
              op(ad, "enhance_voice", {"clip": "c1", "strength": 0.4, "noise_reduction": False}),
-             op(ad, "clean_up_storage", {}),
              op(ad, "render_preview", {})]
         expect("the sound operations answer as PROTOCOL.md says and map to v0.2.0's tools",
                ([x.get("result") for x in r], sent),
                ([{}, {}, {"bleep": "bleep_1", "clip": "c2"}, {}, {}, {},
                  {"hits": [{"clip": "c2", "bleep": "bleep_2", "text": "x", "start": 1, "end": 1.4}]}, {"words": None},
-                 {"effect": "afx_1", "clip": "c2"}, {}, {}, {"effect": "afx_1", "clip": "c2"}, {},
+                 {"effect": "afx_1", "clip": "c2"}, {}, {}, {"effect": "afx_1", "clip": "c2"},
                  {"path": "/p/preview.mp4"}],
                 [("set_clip_volume", {"clipId": "c1", "volume": 0}),
                  ("set_audio_offset", {"clipId": "c1", "offsetFrames": -3}),
@@ -2069,7 +2064,6 @@ def self_test():
                  ("remove_audio_effect", {"clipId": "c1", "effectId": "afx_1"}),
                  ("reorder_audio_effect", {"clipId": "c1", "effectId": "afx_1", "toIndex": 2}),
                  ("enhance_voice", {"clipId": "c1", "strength": 0.4, "noiseReduction": False}),
-                 ("clean_up_storage", {}),
                  ("render_preview", {})]))
         expect("sound operations: a mute, a dry run or an enabled that is not a boolean is bad_request",
                [op(adapter(sound_reply), n, a)["error"]["code"] for n, a in

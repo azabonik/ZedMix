@@ -90,9 +90,13 @@
 #   onset.mkv    silence for 1 s, then 440 Hz at -12 dB to 4 s
 #   lay-mono.mkv, lay-stereo.mkv, lay-quad.mkv, lay-51.mkv   440 Hz at -12 dB in each channel of that layout, 3 s
 #                (these four and the three above: grey 160x90 picture, PCM 48 kHz)
-#   pk-rise.mkv  3 s of stereo PCM at 44.1 kHz, no picture: channel 0 a 2 kHz tone swelling from 0.1 to 0.5,
-#                channel 1 a steady 1 kHz tone at 0.9
-#   pk-fall.mkv  the same, channel 0 a 3 kHz tone falling from 0.5 to 0.05 (the same size in bytes as pk-rise.mkv)
+#   pk-rise.mkv  16 s of stereo PCM at 44.1 kHz (705600 samples, a count 16, 800 and 1600 divide), no picture:
+#                channel 0 a 2 kHz tone whose level steps on whole seconds: silent to 2 s, then 0.1 to 5 s, 0.25 to
+#                9 s, 0.5 to 13 s, 0.2 to 15 s, silent to the end; channel 1 a steady 1 kHz tone at 0.9
+#   pk-fall.mkv  the same, channel 0 a 3 kHz tone: silent to 1 s, 0.5 to 4 s, 0.05 to 6 s, 0.3 to 11 s, 0.15 to
+#                the end (the same size in bytes as pk-rise.mkv)
+#   pk-six1.mkv ... pk-six5.mkv  the same, channel 0 a 2.5 kHz tone: silent to 1 s, then 0.1, but 0.5 from 2 + 2k
+#                to 4 + 2k s for pk-six<k> (each file loud at a moment of its own)
 # The tones are at amplitude 1/8 (peak about -18 dBFS). The frame rate is the source's (rate=30), never -r.
 # Then checks each file it made with ffprobe (codecs, size, rate, frame count, channels) and prints what it made.
 set -euo pipefail
@@ -103,7 +107,7 @@ KEY=" key-grey.mp4 key-blue-p.mp4 key-blue-l.mp4 key-green.mp4 key-black.mp4 key
 CS=" cs-hd.mp4 cs-709.mp4 cs-601.mp4 cs-sd601.mp4 cs-sd.mp4 cs-sd709.mp4 cs-full709.mp4 cs-fullnm.mp4 cs-partial.mp4"
 CS="$CS cs-vp9.webm cs-rotsd.mp4 cs-grid.png cs-grid.jpg cs-cut601.mkv cs-testsrc.mp4 cs-gridll.mp4 cs-green.mp4 "
 SND=" bleep.mp4 voice.mkv rumble.mkv noise.mkv onset.mkv lay-mono.mkv lay-stereo.mkv lay-quad.mkv lay-51.mkv pk-rise.mkv"
-SND="$SND pk-fall.mkv "
+SND="$SND pk-fall.mkv pk-six1.mkv pk-six2.mkv pk-six3.mkv pk-six4.mkv pk-six5.mkv "
 OPTIONAL=" idx.mp4 idx2997.mp4 skew.mp4 cutout.mkv move.mp4 tone300.m4a chirp.m4a long.mp4$MK${KEY# }${CS# }${SND# }"
 WANT=" "
 for n in "$@"; do
@@ -403,13 +407,29 @@ if want lay-mono.mkv; then layout lay-mono.mkv mono; fi
 if want lay-stereo.mkv; then layout lay-stereo.mkv stereo; fi
 if want lay-quad.mkv; then layout lay-quad.mkv quad; fi
 if want lay-51.mkv; then layout lay-51.mkv 5.1; fi
-# peaks <file> <channel 0 expression>: 3 s of stereo PCM at 44.1 kHz, channel 1 a steady 1 kHz tone at 0.9
+# steps <Hz> <level>:<from>:<to> ...: channel 0's expression, a tone at <Hz> whose level is <level> from second
+# <from> to second <to>, counted in samples (silent where no step says)
+steps() {
+  local f="$1" e="0" s
+  shift
+  for s in "$@"; do
+    IFS=: read -r l a b <<< "$s"
+    e="$e+$l*gte(n\\,$((a * 44100)))*lt(n\\,$((b * 44100)))"
+  done
+  echo "($e)*sin(2*PI*$f*t)"
+}
+# peaks <file> <channel 0 expression>: 16 s of stereo PCM at 44.1 kHz, channel 1 a steady 1 kHz tone at 0.9
 peaks() {
   "$FF" -nostdin -hide_banner -loglevel error -y \
-    -f lavfi -i "aevalsrc=exprs='$2|0.9*sin(2*PI*1000*t)':sample_rate=44100:duration=3" -c:a pcm_s16le "$OUT/$1"
+    -f lavfi -i "aevalsrc=exprs='$2|0.9*sin(2*PI*1000*t)':sample_rate=44100:duration=16" -c:a pcm_s16le "$OUT/$1"
 }
-if want pk-rise.mkv; then peaks pk-rise.mkv "(0.1+0.4*t/3)*sin(2*PI*2000*t)"; fi
-if want pk-fall.mkv; then peaks pk-fall.mkv "(0.5-0.15*t)*sin(2*PI*3000*t)"; fi
+if want pk-rise.mkv; then peaks pk-rise.mkv "$(steps 2000 0.1:2:5 0.25:5:9 0.5:9:13 0.2:13:15)"; fi
+if want pk-fall.mkv; then peaks pk-fall.mkv "$(steps 3000 0.5:1:4 0.05:4:6 0.3:6:11 0.15:11:16)"; fi
+for k in 1 2 3 4 5; do
+  if want "pk-six$k.mkv"; then
+    peaks "pk-six$k.mkv" "$(steps 2500 0.1:1:$((2 + 2 * k)) 0.5:$((2 + 2 * k)):$((4 + 2 * k)) 0.1:$((4 + 2 * k)):16)"
+  fi
+done
 
 # probe <file> <stream> <entries>: the stream's values, comma-separated, in ffprobe's order.
 probe() { "$FP" -v error -select_streams "$2" -show_entries "stream=$3" -of csv=p=0 "$OUT/$1"; }
@@ -519,7 +539,7 @@ for f in voice.mkv:1 rumble.mkv:1 noise.mkv:1 onset.mkv:1 lay-mono.mkv:1 lay-ste
   IFS=: read -r n ch <<< "$f"
   if want "$n"; then expect "$n" a:0 codec_name,sample_rate,channels "pcm_s16le,48000,$ch"; fi
 done
-for f in pk-rise.mkv pk-fall.mkv; do
+for f in pk-rise.mkv pk-fall.mkv pk-six1.mkv pk-six2.mkv pk-six3.mkv pk-six4.mkv pk-six5.mkv; do
   if want "$f"; then
     expect "$f" a:0 codec_name,sample_rate,channels pcm_s16le,44100,2
     [ -z "$(probe "$f" v "codec_type")" ] || { echo "make.sh: $f has a video stream" >&2; exit 1; }

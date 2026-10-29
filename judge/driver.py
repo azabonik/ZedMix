@@ -512,10 +512,6 @@ class Driver:
                 args[k] = v
         return self.request("enhance_voice", args)
 
-    def clean_up_storage(self):
-        """The user's storage clean-up, run now."""
-        return self.request("clean_up_storage", {})
-
     # ------------------------------------------------------------ output and jobs
     def export(self, path, wait=True, timeout=EXPORT_TIMEOUT, raw=False, lossless=False):
         """Exports the timeline to `path` (lossless: the user's lossless quality, PROTOCOL.md "Exports").

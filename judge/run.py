@@ -163,7 +163,8 @@ OPTIONAL_MEDIA = ("idx.mp4", "idx2997.mp4", "skew.mp4", "cutout.mkv", "move.mp4"
                   "cs-grid.jpg", "cs-cut601.mkv", "cs-testsrc.mp4", "cs-gridll.mp4", "cs-green.mp4",
                   # the sound tests' media (batch 4)
                   "bleep.mp4", "voice.mkv", "rumble.mkv", "noise.mkv", "onset.mkv", "lay-mono.mkv", "lay-stereo.mkv",
-                  "lay-quad.mkv", "lay-51.mkv", "pk-rise.mkv", "pk-fall.mkv")
+                  "lay-quad.mkv", "lay-51.mkv", "pk-rise.mkv", "pk-fall.mkv", "pk-six1.mkv", "pk-six2.mkv",
+                  "pk-six3.mkv", "pk-six4.mkv", "pk-six5.mkv")
 
 
 # ---------------------------------------------------------------- no access through /proc or ptrace

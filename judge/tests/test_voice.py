@@ -41,7 +41,9 @@ PITCH_LEVEL = 12
 # The limiter's ceiling, read in the export: the codec lifts a few of the limited peaks over it (v0.2.0's single
 # highest sample reads -5.1 to -5.2 dBFS for a -6 dB ceiling, a lookahead limiter of FFmpeg's -4.8), but almost none
 # of the samples. v0.2.0 has 0 to 3 of its 576000 samples over -5.5 dBFS, those limiters 0 to 2; a limiter that holds
-# -4.5 dB instead has 1700 to 2000 (PORTING.md, "batch 4" margins).
+# -4.5 dB instead has 1700 to 2000. The single highest sample is not held: it depends on the codec (the same limiter
+# coded as Opus peaks at -2.2 dBFS with 15 samples over -5.5 dBFS), and the count alone tells the mutants apart
+# (PORTING.md, "batch 4" margins).
 LIMIT_OVER = 10 ** (-5.5 / 20)
 CHECKS = 7 + 4 + 6 + 2 + 4 * 3
 
@@ -116,8 +118,8 @@ def voices(t, d, voice):
              "the dry voice does not clip (peak under -1 dBFS)",
              "de_esser tames the s bursts by 3 dB or more (5-12 kHz)",
              "the compressor narrows loud against quiet by 6 dB or more",
-             "the limiter holds its -6 dB ceiling in the export (at most 0.01 % of its samples over -5.5 dBFS, the "
-             "peak at most -3.5 dBFS with the codec's overshoot) and adds 3 dB or more to the speech (drive 6)"]
+             "the limiter holds its -6 dB ceiling in the export (at most 0.01 % of its samples over -5.5 dBFS) and "
+             "adds 3 dB or more to the speech (drive 6)"]
     if path is None:
         for n in names:
             t.check(n, False, s)
@@ -141,7 +143,7 @@ def voices(t, d, voice):
     seg = s[int(at["lim"] * observe.RATE):int((at["lim"] + 12) * observe.RATE)]
     over = sum(1 for v in seg if abs(v) > LIMIT_OVER)
     gain = speech(s, at["lim"]) - speech(s, x0)
-    t.check(names[6], len(seg) > 0 and over <= len(seg) / 10000 and lp <= -3.5 and gain >= 3,
+    t.check(names[6], len(seg) > 0 and over <= len(seg) / 10000 and gain >= 3,
             f"{over} of {len(seg)} samples over -5.5 dBFS (at most {len(seg) // 10000}), peak {lp:.1f} dBFS, "
             f"speech {gain:+.1f} dB")
     E.clear(d)
