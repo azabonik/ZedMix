@@ -7,10 +7,11 @@ The product line has had three names; each release's installer migrates the one 
     SynthCut  ->  ZabsReel (the v0.2.0 release)  ->  ZedMix
 
 The release the test grades is the runner's input, `run.py --release` (t.release: zedmix, the default and what
-judge.yml passes, or v0.2.0), never what the build installs: a build graded as ZedMix must install ZedMix's skill and
-migrate the v0.2.0 release's configuration, and the v0.2.0 release SynthCut's. Each release's names are the judge's
-own (GENERATIONS), so neither the adapter nor the build can pick what the installer is graded against; the first
-checks fail when `add` installs another release's skill (a rewrite that still installs the v0.2.0 release's names fails them).
+judge.yml passes, v0.2.0, or rewrite, graded on ZedMix's names), never what the build installs: a build graded as
+ZedMix must install ZedMix's skill and migrate the v0.2.0 release's configuration, and the v0.2.0 release SynthCut's.
+Each release's names are the judge's own (GENERATIONS), so neither the adapter nor the build can pick what the
+installer is graded against; the first checks fail when `add` installs another release's skill (a rewrite that still
+installs the v0.2.0 release's names fails them).
 
 Each scene is a **world**: a folder with a home folder, an AppData folder, project folders and fake checkouts and
 packaged apps of the product (old and current names), of a look-alike with the same layout but another package name,
@@ -59,7 +60,7 @@ GENERATIONS = [
     {"product": "ZedMix", "key": "zedmix", "skill": "zedmix-editor", "id": "zedmix",
      "desktop": "zedmix-desktop", "data": ".zedmix"},
 ]
-RELEASE = {"v0.2.0": GENERATIONS[1], "zedmix": GENERATIONS[2]}   # run.py --release -> the names it is graded on
+RELEASE = {"v0.2.0": GENERATIONS[1], "zedmix": GENERATIONS[2], "rewrite": GENERATIONS[2]}   # --release -> its names
 MCP_PACKAGE = "@aive/mcp"   # packages/mcp's package name in a checkout and node_modules/@aive/mcp in a packaged app
 OTHER_PROGRAM = {"command": "npx", "args": ["-y", "some-other-mcp-server"]}
 

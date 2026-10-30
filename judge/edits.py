@@ -130,11 +130,13 @@ def refused_unchanged(d, fn, codes=(drv.ProductError,)):
 
 
 def unchanged(d, fn):
-    """(value, ok, detail): fn() (an operation that must succeed and change nothing, such as a dry run) answers
-    `value` and leaves the State and the undo history as they were. The undo history is probed as in
-    refused_unchanged: a marker K stays, a marker P is set and undone first; afterwards redo must bring P back, undo
-    take it away, and the next undo take back K (an operation that had made an undo step, even one that changes
-    nothing, would leave that undo doing nothing visible). value is None when fn raised (detail says so)."""
+    """(value, state_ok, history_ok, detail): fn() (an operation that must succeed and change nothing, such as a dry
+    run) answers `value`; state_ok: it succeeded and the State right after it is the one before; history_ok: the undo
+    and the redo history are as they were. They are probed as in refused_unchanged: a marker K stays, a marker P is
+    set and undone first (a redo entry); afterwards redo must bring P back, undo take it away, and the next undo take
+    back K (an operation that had made an undo step, even one that changes nothing, drops the redo entry and leaves
+    that undo doing nothing visible). value is None when fn raised (detail says so). When the history was changed, the
+    State afterwards may still hold K: the caller puts it back (restore)."""
     st = d.get_state()
     mine = [(m["frame"], m.get("name")) for m in st.get("markers", [])]
     used = {f for f, _ in mine}
@@ -157,7 +159,8 @@ def unchanged(d, fn):
     s3 = d.get_state()
     d.undo()
     s4 = d.get_state()
-    ok = err is None and s1 == s0 and redone and s3 == s0 and s4 == st
+    state_ok = err is None and s1 == s0
+    history_ok = err is None and redone and s3 == s0 and s4 == st
     why = [err] if err else []
     if s1 != s0:
         why.append("the State changed")
@@ -168,7 +171,22 @@ def unchanged(d, fn):
     if s4 != st:
         why.append("the next undo did not take back the last edit before it (a marker): it left a step in the undo "
                    "history" if s4 == s3 else "the next undo did not give the State from before")
-    return value, ok, "; ".join(why) or "the State and the undo history are as they were"
+    return value, state_ok, history_ok, "; ".join(why) or "the State, the undo and the redo history are as they were"
+
+
+def restore(d, st, undos=2):
+    """Puts the State back to `st` after a probe that found the history changed (unchanged): up to `undos` undos while
+    the State is not `st`, then, when the markers alone still differ, sets them back (one more step). Returns whether
+    the State is `st` afterwards."""
+    for _ in range(undos):
+        if d.get_state() == st:
+            return True
+        d.undo()
+    cur = d.get_state()
+    rest = (lambda s: {k: v for k, v in s.items() if k != "markers"})
+    if cur != st and rest(cur) == rest(st):
+        d.set_markers([(m["frame"], m.get("name")) for m in st.get("markers", [])])
+    return d.get_state() == st
 
 
 def job_now(d, job):

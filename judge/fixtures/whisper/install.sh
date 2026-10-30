@@ -69,7 +69,7 @@ if [ -z "$PREBUILT" ]; then
   "$CMAKE" -S "$SRC" -B "$TMP/build" "${FLAGS[@]}" > "$TMP/configure.log" 2>&1 || { cat "$TMP/configure.log" >&2; exit 1; }
   "$CMAKE" --build "$TMP/build" --target "$TARGET" -j "$JOBS" > "$TMP/build.log" 2>&1 || { tail -50 "$TMP/build.log" >&2; exit 1; }
   BIN="$TMP/build/bin/$TARGET"
-  CMAKE_V="$("$CMAKE" --version | head -1)"
+  CMAKE_V="$("$CMAKE" --version | sed -n 1p)"
   CXX="$(grep -m1 '^CMAKE_CXX_COMPILER:' "$TMP/build/CMakeCache.txt" | cut -d= -f2-)"
 else
   BIN="$PREBUILT" CMAKE_V="not built by install.sh (--bin)" CXX=""
@@ -78,7 +78,7 @@ test -x "$BIN"
 # The build records its commit (whisper.cpp's build-info takes it from git): the judge looks for it in the binary.
 grep -aqF "${COMMIT:0:7}" "$BIN" || { echo "install.sh: the built $TARGET does not name commit ${COMMIT:0:7}" >&2; exit 1; }
 # Static: no program interpreter (a dynamic binary would load the runner's libraries, which differ between hosts).
-if readelf -lW "$BIN" | grep -q 'INTERP'; then echo "install.sh: $BIN is not a static binary" >&2; exit 1; fi
+if readelf -lW "$BIN" | grep 'INTERP' > /dev/null; then echo "install.sh: $BIN is not a static binary" >&2; exit 1; fi
 
 mkdir -p "$DEST/bin" "$DEST/models"
 cp "$BIN" "$DEST/bin/$TARGET"

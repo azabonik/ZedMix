@@ -172,44 +172,17 @@ jobs:
       # (fixtures/whisper/pin.json). install.sh fetches whisper.cpp by its
       # commit hash (never a tag) and checks HEAD against it, builds
       # whisper-cli with the pinned flags (static, not tuned to this CPU) with
-      # the runner image's cmake and compiler, and installs the model after
-      # checking its size and sha256; the folder ends read-only and lockout.py
-      # proves zjudge can change none of it. The binary is always built here:
-      # an actions cache could be written by another workflow's job that runs
-      # the change's code. Only the model comes from a cache (keyed on its
-      # sha256, which install.sh checks before it is used, and the runner
-      # checks again at start), else from its Hugging Face revision URL.
-      # Nothing is downloaded during a test.
-      - name: The speech model's pin
-        id: wpin
-        run: |
-          echo "sha=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["model"]["sha256"])' \
-            "$RUNNER_TEMP/judge-src/judge/fixtures/whisper/pin.json")" >> "$GITHUB_OUTPUT"
-
-      - name: Restore the speech model
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/whisper-model
-          key: judge-whisper-model-${{ steps.wpin.outputs.sha }}
-
+      # the runner image's cmake and compiler, downloads the model from its
+      # pinned Hugging Face revision URL and installs it only after checking
+      # its size and sha256; the folder ends read-only and lockout.py proves
+      # zjudge can change none of it. Nothing comes from an actions cache: a
+      # cache entry can be written by another workflow's job that runs the
+      # change's code, an archive can hold paths outside its folder, and its
+      # key is not a check of its content. The runner checks the commit and
+      # both sha256s again at start. Nothing is downloaded during a test.
       - name: Install the speech recogniser for the judge
-        env:
-          SHA: ${{ steps.wpin.outputs.sha }}
         run: |
-          P="$RUNNER_TEMP/judge-src/judge/fixtures/whisper/pin.json"
-          M="$RUNNER_TEMP/whisper-model/$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["model"]["file"])' "$P")"
-          if [ -f "$M" ] && ! echo "$SHA  $M" | sha256sum -c --quiet - 2>/dev/null; then
-            echo "::warning title=Speech model::the cached model's sha256 is not the pinned one; it is downloaded again"
-            rm -f "$M"
-          fi
-          if [ ! -f "$M" ]; then
-            mkdir -p "$RUNNER_TEMP/whisper-model"
-            curl -fsSL --retry 3 --max-time 900 -o "$M" \
-              "$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["model"]["url"])' "$P")"
-          fi
-          chmod 0755 "$RUNNER_TEMP/whisper-model"
-          chmod 0644 "$M"
-          bash "$RUNNER_TEMP/judge-src/judge/fixtures/whisper/install.sh" /srv/judge/whisper --model "$M"
+          bash "$RUNNER_TEMP/judge-src/judge/fixtures/whisper/install.sh" /srv/judge/whisper
           cat /srv/judge/whisper/manifest.json
 
       # The build user, before any code from the change runs: zjudge, no sudo,
@@ -246,7 +219,7 @@ jobs:
             --fail-if-writable "$(dirname "$GITHUB_ENV")" \
             "$RUNNER_TEMP/judge-src" "$(dirname "$GITHUB_ENV")" "$GITHUB_ENV" "$GITHUB_PATH" "$GITHUB_OUTPUT" \
             "$GITHUB_STEP_SUMMARY" "$(dirname "$(dirname "$(command -v node)")")" "${path_dirs[@]}" "$HOME" \
-            "$GITHUB_WORKSPACE" /srv/judge "$RUNNER_TEMP/whisper-model"
+            "$GITHUB_WORKSPACE" /srv/judge
 
       # The runner's own tests (crash, hang, early exit, wrong check counts, a
       # leaked process, forged results, SIGTERM, the not applicable and not
@@ -319,7 +292,7 @@ jobs:
             --fail-if-writable "$(dirname "$GITHUB_ENV")" \
             "$RUNNER_TEMP/judge-src" "$(dirname "$GITHUB_ENV")" "$GITHUB_ENV" "$GITHUB_PATH" "$GITHUB_OUTPUT" \
             "$GITHUB_STEP_SUMMARY" "$(dirname "$(dirname "$(command -v node)")")" "${path_dirs[@]}" "$HOME" \
-            "$GITHUB_WORKSPACE" /srv/judge "$RUNNER_TEMP/whisper-model"
+            "$GITHUB_WORKSPACE" /srv/judge
 
       # The install and the build ran code from the change under test: the
       # copy's lock and gate must be the bytes pinned before them, and the copy

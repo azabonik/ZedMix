@@ -674,7 +674,10 @@ Batch 4 left `bleep_words`' word targeting v0.2.0-only: the judge had no speech 
 test (PROTOCOL.md rule 4). Anthony's rulings of 2026-10-29: (a) whisper.cpp pinned by commit (v1.9.0, 86c40c3) and the
 ggml-tiny.en model pinned by sha256 and a Hugging Face revision URL, base.en only if tiny.en could not find the
 fixture's words (it finds all seven, so tiny.en stands); (b) `judge.yml` installs them for `zjudge` before the build,
-never during a test, and the judge checks both again at start (README, "The speech recogniser"); (c) the user's own
+never during a test, and the judge checks both again at start (README, "The speech recogniser"); neither comes from an
+actions cache (repair round 2, a security review: a cache archive can hold paths outside its folder, and its key is
+not a check of its content): the binary is built from the pinned commit and the model downloaded from its pinned
+revision URL in every job, its size and sha256 checked before it is installed; (c) the user's own
 words only (`use_default_list` false), so the fixture holds harmless words; (d) every rule this batch takes from
 v0.2.0 is listed for Anthony before merge (the report's "SPEC RULES FOR ANTHONY").
 
@@ -684,7 +687,10 @@ runner gained `--whisper` (and `JUDGE_WHISPER`), checked at start (`run.whisper_
 the v0.2.0 adapter points `AIVE_WHISPER_BIN` and `AIVE_WHISPER_MODEL` at the judge's files only then, and at the
 missing files otherwise. `observe.py` gained `own_sound` (how much of a source's own sound plays in an export's
 window: the export's projection on the source at the lag that lines them up best, a steady tone taken out first) and
-`edits.py` `unchanged` (an operation that succeeds and leaves the State and the undo history as they were).
+`edits.py` `unchanged` (an operation that succeeds and leaves the State, and apart from it the undo and the redo
+history, as they were) and `restore` (the State put back after a probe that found the history changed). Repair round
+2 added known bugs (README, "Known bugs": `T.check`'s `known_bug`, a test's `KNOWN_BUGS`, the status `KBUG`) and the
+release `rewrite` (`run.py --release`: ZedMix's names, no known bug excused).
 
 The recording, `fixtures/speech/speech.mkv` (sha256 ecacdb71630dc7e590e12834118c710af49c13c4d1a392df81be12370454e9e9,
 71462 bytes): espeak-ng 1.50, voice en-us, 150 words a minute, each word on its own (`espeak-ng -v en-us -s 150 -w
@@ -699,27 +705,32 @@ garden 8.15-10.12 against 8.09-8.60, and pencil's start 0.78 s late), worse than
 
 The original seeds a fake transcript into the engine's private cache; the judge has the editor transcribe the
 recording with the judge's recogniser. The clip starts at 1 s of the timeline, so the hits' source seconds differ from
-the timeline's. The user's words are "Garden", "PENCIL,", "pen" and "gardens": two targets in other cases and with
-punctuation, and two that only share a stem with a word of the recording.
+the timeline's. The user's words are "Garden", "PENCIL,", "pen", "gardens", "rive" and "apples": two targets in other
+cases and with punctuation, and four that only share a stem or a prefix with a word of the recording. "rive" (river)
+and "apples" (apple) reach words that are not targets, so an editor that matches stems or prefixes bleeps river and
+apple; "pen" and "gardens" reach only targets (repair round 2: with those two alone a stem matcher passed every check).
 
 | Section | What it guards | Disposition | Judge checks |
 |---|---|---|---|
-| matcher (custom words, `useDefaultList: false`) | The user's words match case-insensitively; with the built-in list off only they match. | judge: case and punctuation ignored on the user's side ("PENCIL,") and on the transcript's (base.en writes "Garden,"), whole words only ("pen", "gardens" hit nothing). The built-in list, `include_mild` and the masked forms stay v0.2.0-only (ruling c). | "bleep_words dry run (the first: the editor transcribes the clip's sound): it reports the words asked for (garden and pencil, matched whole, case and punctuation ignored), each with no bleep, and the State is unchanged" |
-| dry run | Reports the hits with no bleep ids; changes nothing (the project and its revision). | judge. The first dry run makes the transcript: v0.2.0 keeps it with an undo step that changes nothing in the State (an undo then changes nothing visible, and the transcript stays; probed on this tree and v0.2.0), so that run is held to the State only, and a second dry run to the State and the undo history (`edits.unchanged`), as the original's dry run on its seeded transcript. | the check above; "a second dry run (the transcript made): the same hits, and it changes nothing (the State and the undo history)" |
+| matcher (custom words, `useDefaultList: false`) | The user's words match case-insensitively; with the built-in list off only they match. | judge: case and punctuation ignored on the user's side ("PENCIL,") and on the transcript's (base.en writes "Garden,"), whole words only ("pen", "gardens", "rive" and "apples" hit nothing: a stem or prefix matcher hits river and apple, which are not targets, and fails every check on the hits and the exports). The built-in list, `include_mild` and the masked forms stay v0.2.0-only (ruling c). | "bleep_words dry run (the first: the editor transcribes the clip's sound): it reports the words asked for (garden and pencil, matched whole, case and punctuation ignored), each with no bleep, and the State is unchanged" |
+| dry run | Reports the hits with no bleep ids; changes nothing (the project and its revision). | judge. Every dry run, the first included (it makes the transcript), changes nothing: the State, the undo and the redo history (`edits.unchanged`, with a redo entry set up first). Anthony's ruling of 2026-10-30: making a transcript is not an edit. The first dry run's history is its own check, a **known bug** of v0.2.0 and of this line (`--release v0.2.0` and `zedmix`: README, "Known bugs"): they keep the transcript with an undo step that changes nothing in the State, so the redo entry is lost and the next undo does nothing visible (probed on both trees); the check is reported as KNOWN BUG with that reason, never as a pass, and does not fail the run; `--release rewrite` must pass it. After it the test puts the State back (`edits.restore`: one more undo takes back the probe's marker) so the later checks judge the rest. The second dry run is held to the State and the history on every release. | the check above; "the first dry run leaves the undo and the redo history as they were (making a transcript is not an edit)" (known bug of v0.2.0 and zedmix); "a second dry run (the transcript made): the same hits, and it changes nothing (the State and the undo history)" |
 | (new) the transcript | (The original seeds it.) | judge: `get_transcript` holds the seven words in order (case and punctuation ignored), each starting from 0.1 s before its voiced extent to 0.25 s after it and ending no later than 0.25 s after the next word's voiced end. It is not required to be null before the first `bleep_words` (v0.2.0's is; an editor may transcribe on import). | "get_transcript: the recording's seven words in order (case and punctuation ignored), each in its place"; "the dry run's hits are at their words: the transcript's times for them, in source seconds, near each word's voiced extent" |
 | bleep_words | Two hits on the clip with bleep ids; hit frames are the padded windows; the clip's bleeps hold both padded windows; no track is made; the built-in sound is an asset, not placed. | judge: the same hits as the dry run's, each with a bleep id; the clip's bleeps one per hit, each around its hit (padded 0 to 0.25 s each side; v0.2.0 pads 0.06 before and 0.08 after), sound beep, mute true; the tracks and clips otherwise unchanged. v0.2.0-only: the hits' frames (protocol 1's hits are source seconds, and the judge holds them to the transcript's word times instead) and the built-in sound's asset (a project field). | "bleep_words: the same hits, each with a bleep on the clip around its word (beep, mute); no track or clip is added" |
 | undo | One step. | judge: undo gives the State before it, redo brings its bleeps back. | "bleep_words is one undo step (undo gives the State before it, redo brings its bleeps back)" |
 | the base export | The 440 Hz source muted and the 1 kHz beep under each window; elsewhere the source plays. | judge, on speech: under garden and pencil (their voiced extents less 30 ms at each end) the source's share under 0.03 and 1 kHz over 0.1; every other word's share 0.8 to 1.25 with no more 1 kHz than the recording has there plus 0.005. | "export: under garden and pencil the speech is muted and the beep plays"; "export: the other five words keep their own sound, with no beep" |
-| re-run replaces | A second run (sound quack) leaves two bleeps, all quack, none of the first run's ids. | judge: a second run on another word (window, with punctuation, sound beep) leaves one bleep, on window, none of the first run's ids; its export mutes window and plays garden and pencil again; it is one undo step, and undo again leaves no bleep; the export after both undos plays every word. The quack stays v0.2.0-only (a beep's muting can be read; the quack is judged in `test_bleeps`). | "a second bleep_words (window) replaces the first run's bleeps: one bleep, on window, none of the first run's"; "export after the second run: window is muted and beeped; every other word, garden and pencil again, is heard"; "the second run is one undo step (undo gives back the first run's bleeps), and undo again leaves no bleep"; "export after both undos: every word keeps its own sound, with no beep" |
+| re-run replaces | A second run (sound quack) leaves two bleeps, all quack, none of the first run's ids. | judge (the bleeps of the previous run only: whether a re-run keeps bleeps added by hand with `add_bleep` is unspecified, Anthony's ruling of 2026-10-30, and the test adds none by hand, so no check depends on it either way): a second run on another word (window, with punctuation, sound beep) leaves one bleep, on window, none of the first run's ids; its export mutes window and plays garden and pencil again; it is one undo step, and undo again leaves no bleep; the export after both undos plays every word. The quack stays v0.2.0-only (a beep's muting can be read; the quack is judged in `test_bleeps`). | "a second bleep_words (window) replaces the first run's bleeps: one bleep, on window, none of the first run's"; "export after the second run: window is muted and beeped; every other word, garden and pencil again, is heard"; "the second run is one undo step (undo gives back the first run's bleeps), and undo again leaves no bleep"; "export after both undos: every word keeps its own sound, with no beep" |
+| (new) no hidden step | (Anthony's ruling of 2026-10-30: making a transcript is not an edit.) | judge (repair round 2): after the re-run's two undos, one more undo changes the State (on v0.2.0 it takes back the clip's placement; the judge does not say which step it must be) and redo gives it back, so no step that changes nothing visible is left in the undo history, whenever the editor made the transcript (an editor that transcribes on placement with an undo step for it fails here, as the lying adapter `pretx` does). v0.2.0 passes it: its transcript step falls out of the history when the first dry run's probe undoes it and the real run clears the redo history. | "no hidden step: after those undos, one more undo changes the State (no step that changes nothing visible, of the transcript, the dry runs or the runs, is left in the undo history), and redo gives it back" |
 | linked audio | On a silent picture linked to its sound clip, the bleeps land on the sound clip; its export is bleeped. | judge: the clip at volume 0, the same recording on a new sound track at the same place, linked; `bleep_words` on the picture with "Pencil": the hit and its bleep on the sound clip, none on the picture; the export mutes and beeps pencil and plays every other word. | "on a silent picture whose sound a linked clip carries: the hit and its bleep go on the sound clip, none on the picture"; "export of the linked sound clip: pencil is muted and beeped, every other word is heard" |
 | the muted track, save / load | (Judged in `test_bleeps` on `add_bleep`'s bleeps.) | as in batch 4 | see `test_bleeps` |
 
-Runs: `test_bleep_words` passes 18 of 18 (its 14 and the runner's four) on this tree and on the v0.2.0 release, each
-with FFmpeg 9.0.2-17 and 4.4, with tiny.en and with base.en (16 runs), and `test_bleeps` still passes 66 of 66 there.
-In the rehearsal of CI (the container as GitHub's runner, strace 6.8, FFmpeg 6.1.1, `--as-user zjudge --strict
---require-trace`, this computer's recogniser install copied to `/srv/judge/whisper` read-only, as `judge.yml` leaves
-it) `test_bleep_words` takes 22 s and the whole judge passes 1549 of 1549 (1431 s). The runner's self-test there
-takes 524 s, main's 501 s, measured one after the other (an earlier pair: 589 s with one more case, against 520 s).
+Runs (repair round 2): `test_bleep_words` passes 19 of 19 with one known bug (its 16 checks and the runner's four,
+the first dry run's history reported as KNOWN BUG, not counted) on this tree (`--release zedmix`) and on the v0.2.0
+release (`--release v0.2.0`), each with FFmpeg 9.0.2-17 and 4.4, with tiny.en; with `--release rewrite` both trees fail
+that one check (19 of 20) and pass the rest. `test_bleeps` still passes 66 of 66 on both trees with both FFmpegs.
+(Round 1, 14 checks: 18 of 18 on both trees, both FFmpegs, tiny.en and base.en.) In the rehearsal of CI (the
+container as GitHub's runner, strace 6.8, FFmpeg 6.1.1, `--as-user zjudge --strict --require-trace`, this computer's
+recogniser install copied to `/srv/judge/whisper` read-only, as `judge.yml` leaves it) see "Repair round 2" below for
+this round's numbers; round 1's: `test_bleep_words` 22 s, the whole judge 1549 of 1549 (1431 s).
 
 Without `--whisper` every check of `test_bleep_words` is recorded as not applicable (README, "Statuses"), and the
 editor is not started; `judge.yml` gives `--whisper` and `--strict`, so in CI each must pass.
@@ -744,21 +755,70 @@ build's, and `test_bleep_words` passes 18 of 18 with it there.
 | export: the beep over it | 1 kHz over 0.1 | 0.712 (9.0.2-17), 0.687 (4.4) | the original's |
 | export: another word heard | the share 0.8 to 1.25, its 1 kHz at most the recording's own there + 0.005 | 0.993 to 1.000; 1 kHz at most 0.0001 over the recording's own (orange's own is 0.0112) | the share does not depend on the codec's level (it is a projection, at the best lag within 20 ms: 0.0 ms on all); a word muted or bleeped by mistake reads under 0.03 |
 
-### The lying adapters run on this batch (batch 4b)
+### The lying adapters run on this batch (batch 4b, repair round 2)
 
-Each wraps the v0.2.0 adapter and changes one thing, on this tree with FFmpeg 4.4 and tiny.en; the counts are the
-checks that failed of the test's 14 with the runner's four. The real adapter passes 18 of 18 on this tree and v0.2.0
-with both FFmpegs and both models.
+Each wraps the v0.2.0 adapter and changes one thing, on this tree with FFmpeg 4.4 and tiny.en (`--strict
+--require-trace`); the counts are the checks that failed of the test's 16 with the runner's four, graded as
+`--release zedmix` (the first dry run's history is then a known bug: not counted when it fails, a KNOWN BUG PASSED
+when it passes) and, where it matters, as `--release rewrite` (no known bug excused). The real adapter passes 19 of 19
+with one known bug on this tree and v0.2.0 with both FFmpegs, and 19 of 20 with `--release rewrite` (the known bug).
 
-| Lying adapter | test_bleep_words |
-|---|---|
-| answers `bleep_words` and `get_transcript` itself (a canned transcript, made-up bleep ids), never asking the editor (`fake`) | 9 of 18: the real run's bleeps, its undo, every export that should bleep (3), the re-run, its undo, the export after the undos (the undos took back the clip itself: nothing was left to undo), and both linked checks; it passes the dry runs, the transcript and the hits' times, which the export ties to what the editor does |
-| asks the editor for a dry run whatever it is sent, and answers made-up bleep ids (`nobleep`) | 9 of 18: the same 9 as `fake` |
-| sends every run as a real run (`dryreal`) | 6 of 18: both dry runs (the State changed), both undo checks, the export after the undos, the linked check |
-| sends only the words that are lower case letters and digits (a matcher that keeps case and punctuation: `casesens`) | 10 of 18: every check that needs a hit ("Garden" and "PENCIL," are dropped, "pen" and "gardens" hit nothing) |
-| keeps the clip's earlier bleeps on a re-run (adds them back: `append`) | 5 of 18: the re-run (three bleeps), its export (garden and pencil still muted), its undo, the export after the undos, the linked check |
-| puts the bleeps on the clip it was given (`add_bleep` on the picture of the linked pair: `given`) | 7 of 18: both linked checks (the hit on the picture; pencil heard from the sound clip), and its several `add_bleep` steps fail the undo checks and what follows them |
-| answers the hits' times in timeline seconds (`timeline`) | 4 of 18: the hits' place (7.09 for garden), the bleeps around the hits (1 s off), the re-run's and the linked run's bleeps |
-| hands in the previous export for each export (`stale`) | 3 of 18: every export after the first (window, the undone export, the linked export) |
-| runs the judge's recogniser on the clip's file itself, answers the transcript and hits, and makes the bleeps with `remove_bleeps` and `add_bleep` (`own`) | 4 of 18: both undo checks (its `remove_bleeps` and `add_bleep` are several steps), the export after the undos, the linked check |
-| the same, and answers the `undo` and `redo` after it with as many of the editor's own (`own2`) | passes 18 of 18: the declared limit (README, "What it does not defend against") |
+| Lying adapter | zedmix | rewrite |
+|---|---|---|
+| answers `bleep_words` and `get_transcript` itself (a canned transcript, made-up bleep ids), never asking the editor (`fake`; the verifier's `faketr` is the same with other times) | 10 of 20 fail: the real run's bleeps, its undo, every export that should bleep (3), the re-run, its undo, no hidden step, the export after the undos, the linked check; it passes the dry runs, the transcript and the hits' times, which the exports tie to what the editor does (KNOWN BUG PASSED: it never asks the editor) | |
+| asks the editor for a dry run whatever it is sent, and answers made-up bleep ids (`nobleep`) | 10 of 19: the same 10 as `fake` | |
+| sends every run as a real run (`dryreal`); a dry run that bleeps and reports no bleep ids (the verifier's `dryadd`) | 2 of 19 each: both dry runs' State checks (the State changed); the first's history is a known bug | |
+| a dry run done as a real run and an undo (the State back, the redo entry lost: the verifier's `dryundo`) | 1 of 19: the second dry run (its history); the first's is a known bug | 2 of 20: both dry runs' history |
+| the first dry run adds a step that changes nothing visible (`set_markers` with the same markers), the transcript made when the clip is placed (`hidden`) | 1 of 19: no hidden step; the first dry run's history is a known bug | 2 of 20: the first dry run's history, no hidden step |
+| the same step after every dry run (`hiddenall`) | 2 of 19: the second dry run, no hidden step | 3 of 20: both dry runs, no hidden step |
+| the transcript made when the clip is placed (a dry run there), so the judge's first dry run finds it made and v0.2.0's step lies before the judge's probe (`pretx`) | 1 of 20: no hidden step (the step is left in the history), and KNOWN BUG PASSED on the first dry run | 1 of 20: no hidden step |
+| matches stems and prefixes: each user word also hits the transcript words that begin with it, that it begins, or that it is with an s (the verifier's `stem`) | 5 of 19: the first dry run's hits (river and apple too), the second dry run, the hits' place, the real run, the export of the other words (river and apple muted) | 6 of 20: the same, and the first dry run's history |
+| sends only the words that are lower case letters and digits (a matcher that keeps case and punctuation: `casesens`) | 10 of 19: every check that needs a hit ("Garden" and "PENCIL," are dropped; "pen", "gardens", "rive" and "apples" hit nothing) | |
+| keeps the clip's earlier bleeps on a re-run (adds them back: `append`) | 6 of 19: the re-run (three bleeps), its export, its undo, no hidden step, the export after the undos, the linked check | |
+| puts the bleeps on the clip it was given (`add_bleep` on the picture of the linked pair: `given`) | 8 of 19: its several `add_bleep` steps fail the undo checks and what follows them, and both linked checks | |
+| answers the hits' times in timeline seconds (`timeline`) | 4 of 19: the hits' place, the bleeps around the hits (1 s off), the re-run's and the linked run's bleeps | |
+| answers the hits with the bleeps' padded windows instead of the words' times (the verifier's `padded`) | 1 of 19: the hits' place (not the transcript's times) | |
+| bleeps other words and reports the asked-for words with those bleep ids (the verifier's `wrongw`) | 7 of 19: the real run, both base exports, the re-run, its export, the linked run and its export | |
+| bleeps only the first half of each word (`set_bleep` after the run: the verifier's `half`) | 10 of 19: the bleeps around the hits, the undo checks and what follows them, every export that should bleep | |
+| hands in the previous export for each export (`stale`) | 3 of 19: every export after the first (window, the undone export, the linked export) | |
+| runs the judge's recogniser on the clip's file itself, answers the transcript and hits, and makes the bleeps with `remove_bleeps` and `add_bleep` (`own`) | 5 of 20: both undo checks (its `remove_bleeps` and `add_bleep` are several steps), no hidden step, the export after the undos, the linked check | |
+| the same, and answers the `undo` and `redo` after it with as many of the editor's own (`own2`); the same from a copy of the test's own `LAYOUT` with no recogniser at all (the verifier's `canned`) | passes 20 of 20 (KNOWN BUG PASSED: neither asks the editor for a dry run): the declared limit (README, "What it does not defend against") | passes 20 of 20 |
+
+In round 1 (61fdb0c) the verifier's `stem` passed every check (its decoys "pen" and "gardens" reached only target words); "rive"
+and "apples" now reach river and apple. `own2` and `canned` count the undos they do not group as single steps (a first
+version of both lost track at the undo past the placement and failed three checks there).
+
+### Repair round 2 (Anthony's rulings of 2026-10-30, the verifier's and a security review's findings)
+
+- The known bug (rule 7, "making a transcript is not an edit"): every dry run, the first included, is held to the
+  State, the undo and the redo history (a redo entry set up first). v0.2.0 and this tree keep the transcript the
+  first dry run makes as an undo step that changes nothing in the State, so the redo entry is lost and the next undo
+  does nothing visible. The check "the first dry run leaves the undo and the redo history as they were (making a
+  transcript is not an edit)" is listed in `test_bleep_words`' `KNOWN_BUGS` for `--release v0.2.0` and `zedmix`
+  (README, "Known bugs"): reported as KNOWN BUG with that reason, never counted as a pass, not failing the run (also
+  with `--strict`); `--release rewrite` must pass it (both trees fail it there, 19 of 20). A listed release that
+  passes it is reported as KNOWN BUG PASSED, so the entry is removed. The new check "no hidden step" holds the rule
+  whenever the transcript is made: after the runs' undos, one more undo still changes the State.
+- Rule 2 (whole words only) is judged: the decoys "rive" and "apples" reach river and apple, which are not targets
+  (the verifier's `stem` adapter, which passed every check of round 1, fails 5 checks, 6 as `rewrite`).
+- Rule 9: whether a re-run keeps bleeps added by hand is unspecified (PROTOCOL.md, `bleep_words`); the test adds none
+  by hand, so no check depends on it.
+- `judge.yml` no longer restores the model with `actions/cache` (a cache archive can carry paths outside its folder,
+  and the key is not a check of its content): `install.sh` downloads it from the pinned revision URL in every job and
+  checks its size and sha256 before it installs it; the binary is still built from the pinned commit in the job.
+  `lockout.py` no longer gets the cache folder (it is gone); `/srv/judge`, which holds the install, is covered as
+  before.
+- `install.sh`: the committed copy is the one that does not lose a pipe's status under `pipefail` (`sed -n 1p` and
+  `grep ... > /dev/null` in place of `head -1` and `grep -q`, which can end `readelf` with SIGPIPE and pass a dynamic
+  binary), mode 100755 as `graphics-addon/install.sh`.
+- Runs: see "Runs" above (16 checks; this tree and v0.2.0, FFmpeg 9.0.2-17 and 4.4, tiny.en). `test_cli_migrate`
+  passes 103 of 103 on this tree as `--release rewrite` (ZedMix's names).
+- Rehearsal of CI (`zedmix-judge-sim:c2`, strace 6.8, FFmpeg 6.1.1, `--as-user zjudge --strict --require-trace`, the
+  recogniser installed read-only under `/srv/judge/whisper` as `judge.yml` leaves it): `test_bleep_words` 19 of 19
+  with one known bug (24 s), `test_bleeps` 66 of 66. `run.py` refuses a `--whisper` folder `zjudge` could change: a
+  model, a binary or a folder others can write, or a folder that belongs to `zjudge`, each `JUDGE: refused: --whisper
+  ...` (four cases run there by hand; the self-test has no case for it).
+- The self-test's time, main (2bc61c4) and this commit measured one after the other: on this computer with nothing
+  else running, 340 s and 354 s (+4.1%); in the rehearsal's container (`--as-user zjudge`, with `JUDGE_WHISPER`),
+  503 s and 543 s (+8.0%). The verifier's local pair of round 1 (356 s and 431 s) ran while another session ran six
+  self-tests at once.

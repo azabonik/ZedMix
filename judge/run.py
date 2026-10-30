@@ -42,10 +42,13 @@
             that needs it records its checks as not applicable without it (--strict fails them). Under --as-user that
             user must be able to read and run it and change none of it
 --release   the release the build under test is graded as (default zedmix): zedmix (this product line's current
-            release, and a rewrite of it) or v0.2.0 (the v0.2.0 release). The judge holds what each release
-            is (its names: tests/test_cli_migrate.py's GENERATIONS), and the tests that depend on it grade the build
-            against the release given here, never against what the build or the adapter says it is. judge.yml passes
-            --release zedmix (the lock covers that line); a run on the v0.2.0 release passes --release v0.2.0
+            release), v0.2.0 (the v0.2.0 release) or rewrite (a clean-room rewrite of the current release: ZedMix's
+            names, and held to every check, the known bugs of the other two included). The judge holds what each
+            release is (its names: tests/test_cli_migrate.py's GENERATIONS; its known bugs: each test's KNOWN_BUGS,
+            see "Statuses"), and the tests that depend on it grade the build against the release given here, never
+            against what the build or the adapter says it is. judge.yml passes --release zedmix while it grades this
+            line (the lock covers that line), and --release rewrite once it grades the rewrite; a run on the v0.2.0
+            release passes --release v0.2.0
 --flaky-file
             a new file (it must not exist) that gets one FLAKY line per test that passed its rerun after strace
             failed (see "Downloads"), and nothing when no test did; judge.yml puts its lines in the job summary
@@ -57,6 +60,12 @@ check on the graphics add-on and no --graphics-addon was given) or NOT OBSERVED 
 not installed). Those two count as neither passed nor failed: each
 is printed with its name and the JUDGE line counts them ("JUDGE: 150/150 passed, 6 not applicable, 2 not
 observed"). --strict turns not applicable into a failure, --require-trace turns not observed into a failure.
+A check can also be a KNOWN BUG: a test lists in KNOWN_BUGS, per check and per release, a bug that release is known
+to have (T.check's known_bug); when the release under test (--release) is listed and the check fails, it is recorded
+as a known bug with the reason, printed by name, counted on the JUDGE line (", 1 known bug") and never as a pass, and
+it does not fail the run, also with --strict. When a listed release passes it, it counts as a pass and the runner
+prints "judge: KNOWN BUG PASSED: ..." and adds ", 1 KNOWN BUG PASSED (remove the entry)" to the JUDGE line, so the
+stale entry is removed. A release that is not listed (rewrite, for every entry) is held to the check as to any other.
 
 Downloads: every test that starts the editor runs its adapter under strace (JUDGE_STRACE names it; empty means none,
 else the strace on PATH, or under --as-user the one in SYSTEM_PATH), with the network calls traced and io_uring
@@ -691,8 +700,9 @@ REQUIRE_TRACE = False  # --require-trace (the runner's flag; the runner passes i
 # adapter, so no process of the adapter's tree holds the channel.
 TRACEE = ["/bin/sh", "-c", 'exec 2>>"$0"; exec "$@"']
 
-# The releases a build can be graded as (--release, T.release): the current product line's (the default) and v0.2.0's.
-RELEASES = ("zedmix", "v0.2.0")
+# The releases a build can be graded as (--release, T.release): the current product line's (the default), v0.2.0's,
+# and a clean-room rewrite of the current line (its names are ZedMix's; no known bug is excused for it: KNOWN BUGS).
+RELEASES = ("zedmix", "v0.2.0", "rewrite")
 
 # The graphics add-on the judge gives the editor (--graphics-addon; PROTOCOL.md, "Motion graphics"): the folder's
 # node_modules holds Remotion's packages, and the Chrome headless shell is in Remotion's own browser cache below it.
@@ -1310,9 +1320,15 @@ class T:
         self._emit(rec)
         return bool(ok)
 
-    def check(self, name, ok, detail="", harness=False, needs=()):
+    def check(self, name, ok, detail="", harness=False, needs=(), known_bug=None):
         """Records one check. Returns ok. A harness check (one the runner adds, such as "port closed after stop") is
         not counted against the test's CHECKS.
+
+        known_bug: {release: why} for a check that a listed release is known to fail (the test's KNOWN_BUGS; README.md,
+        "Known bugs"). When the release under test (--release, never the adapter's word) is listed, the check is
+        recorded with the status known_bug and its real result: a failure is a KNOWN BUG (neither passed nor failed,
+        also with --strict), a pass is a pass that the runner reports loudly (the entry is stale). For any other
+        release it is an ordinary check.
 
         needs: the crafted inputs (observe.Crafted, one or a list) the check is about. When one of them could not be
         made (the substitution found nothing to replace in the file the editor saved), the check is recorded as not
@@ -1322,6 +1338,9 @@ class T:
         missing = [c for c in needs if not c.applicable]
         if missing:
             return self.not_applicable(name, "; ".join(c.why for c in missing), harness=harness)
+        if known_bug and not harness and self.release in known_bug:
+            return self._record(name, ok, f"a known bug of the {self.release} release ({known_bug[self.release]}): "
+                                          f"{detail}", harness, "known_bug")
         return self._record(name, ok, detail, harness, None)
 
     def not_applicable(self, name, why, harness=False):
@@ -1564,15 +1583,17 @@ def _is_int(v):
     return isinstance(v, int) and not isinstance(v, bool)
 
 
-STATUSES = ("not_applicable", "not_observed")
+STATUSES = ("not_applicable", "not_observed", "known_bug")
 CHECK_KEYS = {"check", "ok", "detail"}
 
 
 def known_record(r, i, n):
     """Whether record `i` of `n` has one of the shapes T._emit writes, in its place: {"declare": int or None} first,
     {"check": str, "ok": bool, "detail": str} (with "harness": true for a runner-added check, "status":
-    "not_applicable" or "not_observed", with ok true, for a check that was not made, and "rerun": "strace" only on a
-    failed download check, NET_CHECK, when strace itself failed: strace_failed), {"end": true} last."""
+    "not_applicable" or "not_observed", with ok true, for a check that was not made, "status": "known_bug", with its
+    real result and never on a harness check, for a check of a release's known bug (T.check's known_bug), and
+    "rerun": "strace" only on a failed download check, NET_CHECK, when strace itself failed: strace_failed),
+    {"end": true} last."""
     if not isinstance(r, dict):
         return False
     keys = set(r)
@@ -1583,20 +1604,27 @@ def known_record(r, i, n):
     if CHECK_KEYS <= keys <= CHECK_KEYS | {"harness", "status", "rerun"}:
         return (isinstance(r["check"], str) and isinstance(r["ok"], bool) and isinstance(r["detail"], str)
                 and r.get("harness", True) is True and r.get("status", STATUSES[0]) in STATUSES
-                and ("status" not in r or r["ok"] is True)
+                and ("status" not in r or r["ok"] is True or r["status"] == "known_bug")
+                and (r.get("status") != "known_bug" or "harness" not in r)
                 and ("rerun" not in r or (r["rerun"] == RERUN_STRACE and r["check"] == NET_CHECK
                                           and r.get("harness") is True and r["ok"] is False and "status" not in r)))
     return False
 
 
-LABEL = {"pass": "PASS", "fail": "FAIL", "not applicable": "N/A ", "not observed": "N/O "}
+# The detail of a known-bug check that passed: the release no longer has the bug, and its entry must go.
+KNOWN_BUG_PASSED = "PASSED, BUT LISTED AS A KNOWN BUG of this release: remove the test's KNOWN_BUGS entry"
+LABEL = {"pass": "PASS", "fail": "FAIL", "not applicable": "N/A ", "not observed": "N/O ", "known bug": "KBUG"}
 
 
 def status_of(r, strict=False, require_trace=False):
-    """(status, detail) of a check record: pass, fail, not applicable or not observed; --strict and --require-trace
-    turn the last two into failures."""
+    """(status, detail) of a check record: pass, fail, not applicable, not observed or known bug; --strict and
+    --require-trace turn not applicable and not observed into failures, and nothing turns a known bug into one. A
+    known-bug check that passed is a pass whose detail says the entry is stale (KNOWN_BUG_PASSED)."""
     detail = r.get("detail") or ""
     st = r.get("status")
+    if st == "known_bug":
+        return ("pass", f"{KNOWN_BUG_PASSED}: {detail}") if r.get("ok") is True else \
+            ("known bug", f"KNOWN BUG, not counted as a pass: {detail}")
     if st == "not_applicable":
         return ("fail", f"not applicable, a failure with --strict: {detail}") if strict else \
             ("not applicable", f"not applicable: {detail}")
@@ -1759,7 +1787,7 @@ def _first_try(path):
 def _passed(c):
     """Whether check `c` (verdict) did not fail: it passed, or was not applicable or not observed (without --strict
     or --require-trace)."""
-    return c["status"] in ("pass", "not applicable", "not observed")
+    return c["status"] in ("pass", "not applicable", "not observed", "known bug")
 
 
 def run_judged(meta, a, base, media, adapter):
@@ -1898,8 +1926,8 @@ def main():
                          "judge/fixtures/whisper/install.sh makes them; checked against judge/fixtures/whisper/pin.json "
                          "at start); without it the checks that need it are not applicable")
     ap.add_argument("--release", choices=RELEASES, default=RELEASES[0],
-                    help="the release the build is graded as: zedmix (the default; judge.yml passes it) or v0.2.0 "
-                         "(the v0.2.0 release)")
+                    help="the release the build is graded as: zedmix (the default; judge.yml passes it), v0.2.0 "
+                         "(the v0.2.0 release) or rewrite (a clean-room rewrite of zedmix, no known bug excused)")
     ap.add_argument("--flaky-file", metavar="FILE",
                     help="write one FLAKY line per test that passed its rerun after strace failed (none: an empty "
                          "file) to this new file; judge.yml puts them in the job summary")
@@ -2081,6 +2109,19 @@ def main():
                   + ("--strict" if st == "not applicable" else "--require-trace") + " fails them):")
             for c in named:
                 print(f"judge:   {c['test']}: {c['check']}")
+    named = [c for c in results if c["status"] == "known bug"]
+    if named:
+        counts += f", {len(named)} known bug"
+        print(f"judge: {len(named)} check(s) KNOWN BUG of the {a.release} release (neither passed nor failed, not "
+              "counted as passes; a release that is not listed must pass them: README.md, \"Known bugs\"):")
+        for c in named:
+            print(f"judge:   {c['test']}: {c['check']}  -- {_short(c.get('detail') or '', 400)}")
+    stale = [c for c in results if c["status"] == "pass" and (c.get("detail") or "").startswith(KNOWN_BUG_PASSED)]
+    if stale:
+        counts += f", {len(stale)} KNOWN BUG PASSED (remove the entry)"
+        for c in stale:
+            print(f"judge: KNOWN BUG PASSED: {c['test']}: {c['check']}: the {a.release} release is listed as having "
+                  "this bug and it passed: remove the test's KNOWN_BUGS entry for it", flush=True)
     flaky = [r for r in RERUNS if r[2]]
     if flaky:
         counts += f", {len(flaky)} flaky (strace)"

@@ -1,11 +1,15 @@
 """bleep_words with the user's own words, on real speech, heard in the export: the editor transcribes a recording of
 seven words with the speech recogniser the judge gives it (run.py --whisper: a pinned whisper.cpp and its tiny.en
-model, judge/README.md "The speech recogniser"); a dry run reports the hits and changes nothing, its undo history
-included; the transcript holds the seven words, each in its place; a real run bleeps exactly the words asked for,
-matched whole, with case and punctuation ignored, each hit at its word in source seconds and its bleep around it; the
-export mutes those words and plays the beep over them while every other word keeps its own sound; it is one undo step;
-a second run replaces the first run's bleeps; on a picture whose sound a linked clip carries, the bleeps go on the
-clip that carries the sound. Port of the word-targeting sections of packages/core/scripts/smoke-bleep.ts (the
+model, judge/README.md "The speech recogniser"); a dry run reports the hits and changes nothing, its undo and redo
+history included, the first one too (making a transcript is not an edit: a known bug of v0.2.0 and this line, held to
+a rewrite, README.md "Known bugs"); the transcript holds the seven words, each in its place; a real run bleeps exactly
+the words asked for, matched whole (no stem or prefix: "rive" does not bleep river, nor "apples" apple), with case and
+punctuation ignored, each hit at its word in source seconds and its bleep around it; the export mutes those words and
+plays the beep over them while every other word keeps its own sound; it is one undo step; a second run replaces the
+first run's bleeps (whether it keeps bleeps added by hand is unspecified, and no check depends on it); after the runs'
+undos one more undo still changes the State, so no step that changes nothing visible (a transcript's, made at any
+moment) is left in the undo history; on a picture whose sound a linked clip carries, the bleeps go on the clip
+that carries the sound. Port of the word-targeting sections of packages/core/scripts/smoke-bleep.ts (the
 dry run, the real run and its undo, the re-run, the linked sound clip), with the user's own words only
 (`use_default_list` false): the built-in list and `include_mild` stay v0.2.0-only, so no swearing enters the
 repository (judge/PORTING.md has the map).
@@ -43,9 +47,11 @@ LAYOUT = [                   # fixtures/speech/layout.json: each word's voiced e
     ("apple", 0.60, 1.01), ("river", 1.61, 2.08), ("basket", 2.68, 3.26), ("orange", 3.86, 4.36),
     ("window", 4.96, 5.49), ("garden", 6.09, 6.60), ("pencil", 7.20, 7.73),
 ]
-# The user's words: two targets in other cases and with punctuation, and two that only share a stem with a word of the
-# recording ("pen" begins "pencil", "gardens" is "garden" and more): words match whole, case and punctuation ignored.
-WORDS = ["Garden", "PENCIL,", "pen", "gardens"]
+# The user's words: two targets in other cases and with punctuation, and four that only share a stem or a prefix with a
+# word of the recording ("pen" begins "pencil", "gardens" is "garden" and more, "rive" begins "river", "apples" is
+# "apple" and more): words match whole, case and punctuation ignored. River and apple are not targets, so an editor
+# that matches stems or prefixes bleeps them (pen and gardens only reach words that are targets anyway).
+WORDS = ["Garden", "PENCIL,", "pen", "gardens", "rive", "apples"]
 TARGETS = {"garden", "pencil"}
 RERUN = ["window."]          # the second run: one other word, with punctuation
 LINKED = ["Pencil"]          # the linked sound clip's run: one word, a set no other export bleeps
@@ -65,6 +71,7 @@ EDGE = 0.03
 NAMES = [
     "bleep_words dry run (the first: the editor transcribes the clip's sound): it reports the words asked for "
     "(garden and pencil, matched whole, case and punctuation ignored), each with no bleep, and the State is unchanged",
+    "the first dry run leaves the undo and the redo history as they were (making a transcript is not an edit)",
     "a second dry run (the transcript made): the same hits, and it changes nothing (the State and the undo history)",
     "get_transcript: the recording's seven words in order (case and punctuation ignored), each in its place",
     "the dry run's hits are at their words: the transcript's times for them, in source seconds, near each word's "
@@ -76,12 +83,20 @@ NAMES = [
     "a second bleep_words (window) replaces the first run's bleeps: one bleep, on window, none of the first run's",
     "export after the second run: window is muted and beeped; every other word, garden and pencil again, is heard",
     "the second run is one undo step (undo gives back the first run's bleeps), and undo again leaves no bleep",
+    "no hidden step: after those undos, one more undo changes the State (no step that changes nothing visible, of the "
+    "transcript, the dry runs or the runs, is left in the undo history), and redo gives it back",
     "export after both undos: every word keeps its own sound, with no beep",
     "on a silent picture whose sound a linked clip carries: the hit and its bleep go on the sound clip, none on the "
     "picture",
     "export of the linked sound clip: pencil is muted and beeped, every other word is heard",
 ]
 CHECKS = len(NAMES)
+# Bugs a release is known to have, per check (run.py T.check's known_bug; README.md "Known bugs"): for a listed
+# release (--release) a failure is recorded as a KNOWN BUG with the reason, never as a pass, and does not fail the run;
+# any other release (rewrite) must pass the check. Anthony's ruling of 2026-10-30: making a transcript is not an edit.
+HIDDEN_STEP = ("the first dry run keeps its transcript as an undo step that changes nothing visible (ruling of "
+               "2026-10-30)")
+KNOWN_BUGS = {NAMES[1]: {"v0.2.0": HIDDEN_STEP, "zedmix": HIDDEN_STEP}}
 
 
 def norm(text):
@@ -235,25 +250,27 @@ def run(t):
     st0 = d.get_state()
 
     # ---------------------------------------------------------------- the dry runs, the transcript, the hits
-    # The first transcribes: v0.2.0 keeps the transcript with an undo step that changes nothing in the State (an
-    # undo then does nothing visible, and the transcript stays), so only the State is held unchanged here; the second
-    # dry run, with the transcript made, is held to the State and the undo history both (as the original's dry run,
-    # on a transcript it had seeded).
-    try:
-        dhits = d.bleep_words(clips=[A], words=WORDS, use_default_list=False, dry_run=True).get("hits")
-    except drv.JudgeError as e:
-        dhits = f"refused: {e}"
-    st = d.get_state()
+    # The first transcribes; it is held to the State, and (its own check) to the undo and the redo history, with a
+    # redo entry set up first (edits.unchanged): making a transcript is not an edit. v0.2.0 keeps the transcript with
+    # an undo step that changes nothing in the State (KNOWN_BUGS); the State is then put back (the probe's marker) so
+    # the checks after it judge the rest. The second dry run, with the transcript made, is held to both again.
+    dry, st_ok, hist_ok, hist_why = E.unchanged(d, lambda: d.bleep_words(clips=[A], words=WORDS, use_default_list=False,
+                                                                         dry_run=True))
+    dhits = (dry or {}).get("hits") if isinstance(dry, dict) else f"no answer ({hist_why})"
     ok, hwhy = hits_ok(dhits, A, TARGETS, bleep=False)
-    t.check(NAMES[0], ok and st == st0, hwhy + ("" if st == st0 else "; the State changed"))
+    t.check(NAMES[0], ok and st_ok, hwhy + ("" if st_ok else "; the State changed (or it was refused)"))
+    back = E.restore(d, st0)
+    t.check(NAMES[1], hist_ok, hist_why + ("" if back else "; the State could not be put back afterwards"),
+            known_bug=KNOWN_BUGS[NAMES[1]])
     key = (lambda hs: sorted((norm(h.get("text")), h.get("start"), h.get("end")) for h in hs)
            if isinstance(hs, list) and all(isinstance(h, dict) for h in hs) else hs)
-    dry, same, why = E.unchanged(d, lambda: d.bleep_words(clips=[A], words=WORDS, use_default_list=False,
-                                                          dry_run=True))
-    hits0 = (dry or {}).get("hits")
+    dry, st_ok, hist_ok, why = E.unchanged(d, lambda: d.bleep_words(clips=[A], words=WORDS, use_default_list=False,
+                                                                    dry_run=True))
+    hits0 = (dry or {}).get("hits") if isinstance(dry, dict) else None
     ok, hwhy = hits_ok(hits0, A, TARGETS, bleep=False)
-    t.check(NAMES[1], ok and same and key(hits0) == key(dhits), f"{hwhy}"
+    t.check(NAMES[2], ok and st_ok and hist_ok and key(hits0) == key(dhits), f"{hwhy}"
             + ("" if key(hits0) == key(dhits) else " (not the first dry run's)") + f"; {why}")
+    E.restore(d, st0)
 
     words = d.get_transcript(asset)
     ok, notes = isinstance(words, list) and [norm(w.get("text")) for w in words if isinstance(w, dict)] == [
@@ -268,11 +285,11 @@ def run(t):
         good = a - TR_EARLY <= s <= b + TR_LATE and s < e <= nb + TR_LATE
         ok = ok and good
         notes.append(f"{w.get('text')!r} [{s},{e}] (voiced [{a},{b}])" + ("" if good else " <-"))
-    t.check(NAMES[2], ok, ("; ".join(notes) if notes else f"transcript {E.short(words, 300)}")
+    t.check(NAMES[3], ok, ("; ".join(notes) if notes else f"transcript {E.short(words, 300)}")
             + f" (start from {TR_EARLY} s before the voiced start to {TR_LATE} s after its end; end no later than "
               f"{TR_LATE} s after the next word's voiced end)")
     ok, why = at_words(dhits, words)
-    t.check(NAMES[3], ok, why)
+    t.check(NAMES[4], ok, why)
 
     # ---------------------------------------------------------------- the real run, its undo, the export
     try:
@@ -284,18 +301,18 @@ def run(t):
     same = key(hits) == key(dhits)
     ok2, why2 = bleeps_around(st1, A, hits if ok1 else None)
     kept = without_bleeps(st1) == without_bleeps(st0)
-    t.check(NAMES[4], ok1 and same and ok2 and kept, f"{why1}; " + ("the dry run's texts and times" if same else
+    t.check(NAMES[5], ok1 and same and ok2 and kept, f"{why1}; " + ("the dry run's texts and times" if same else
                                                                     f"not the dry run's ({short_hits(dhits)})")
             + f"; {why2}" + ("" if kept else "; the tracks or clips changed besides the bleeps"))
     d.undo()
     u = d.get_state()
     d.redo()
     r = d.get_state()
-    t.check(NAMES[5], u == st0 and r == st1 and st1 != st0,
+    t.check(NAMES[6], u == st0 and r == st1 and st1 != st0,
             f"after undo {short_bleeps(bleeps_of(u, A))}; after redo {short_bleeps(bleeps_of(r, A))}")
     (okm, whym), (okh, whyh) = heard(t, src, export(t, d, "words"), TARGETS)
-    t.check(NAMES[6], okm, whym)
-    t.check(NAMES[7], okh, whyh)
+    t.check(NAMES[7], okm, whym)
+    t.check(NAMES[8], okh, whyh)
 
     # ---------------------------------------------------------------- the second run replaces the first
     first = {h.get("bleep") for h in hits} if ok1 else set()
@@ -307,18 +324,29 @@ def run(t):
     ok, why = hits_ok(hits2, A, {"window"}, bleep=True)
     bs = bleeps_of(st2, A)
     okb, whyb = bleeps_around(st2, A, hits2 if ok else None)
-    t.check(NAMES[8], ok and okb and len(bs) == 1 and not first & {b.get("id") for b in bs},
+    t.check(NAMES[9], ok and okb and len(bs) == 1 and not first & {b.get("id") for b in bs},
             f"{why}; {whyb}; the first run's bleeps {sorted(first)}")
     (okm, whym), (okh, whyh) = heard(t, src, export(t, d, "rerun"), {"window"})
-    t.check(NAMES[9], okm and okh, f"{whym}; {whyh}")
+    t.check(NAMES[10], okm and okh, f"{whym}; {whyh}")
     d.undo()
     u1 = d.get_state()
     d.undo()
     u0 = d.get_state()
-    t.check(NAMES[10], u1 == st1 and u0 == st0, f"after one undo {short_bleeps(bleeps_of(u1, A))}; after two "
+    t.check(NAMES[11], u1 == st1 and u0 == st0, f"after one undo {short_bleeps(bleeps_of(u1, A))}; after two "
                                                 f"{short_bleeps(bleeps_of(u0, A))}")
+    # The step before the first run is the user's last edit (the clip's placement, on v0.2.0): a step the editor kept
+    # for a transcript (or anything else that changes nothing visible) would be undone here instead.
+    d.undo()
+    up = d.get_state()
+    d.redo()
+    ur = d.get_state()
+    t.check(NAMES[12], up != st0 and ur == st0,
+            ("" if up != st0 else "one more undo changed nothing (a step that changes nothing visible is left in the "
+                                  "undo history); ")
+            + ("" if ur == st0 else "redo did not give the State back; ")
+            + f"clips after that undo: {[c.get('id') for tr in up.get('tracks', []) for c in tr.get('clips', [])]}")
     (_, _), (okh, whyh) = heard(t, src, export(t, d, "undone"), set())
-    t.check(NAMES[11], okh, whyh)
+    t.check(NAMES[13], okh, whyh)
 
     # ---------------------------------------------------------------- a linked sound clip carries the sound
     try:
@@ -327,7 +355,7 @@ def run(t):
         Aa = d.place_clip(asset, a0, int(START * FPS), 0)
         d.link_clips([A, Aa])
     except drv.JudgeError as e:  # (the undos above took back more than they should have, for one)
-        for n in NAMES[12:]:
+        for n in NAMES[14:]:
             t.check(n, False, f"the linked sound clip could not be set up: {e}")
         return
     try:
@@ -337,7 +365,7 @@ def run(t):
     st3 = d.get_state()
     ok, why = hits_ok(hits3, Aa, {"pencil"}, bleep=True)
     okb, whyb = bleeps_around(st3, Aa, hits3 if ok else None)
-    t.check(NAMES[12], ok and okb and bleeps_of(st3, A) == [],
+    t.check(NAMES[14], ok and okb and bleeps_of(st3, A) == [],
             f"{why}; on the sound clip: {whyb}; on the picture: {short_bleeps(bleeps_of(st3, A))}")
     (okm, whym), (okh, whyh) = heard(t, src, export(t, d, "linked"), {"pencil"})
-    t.check(NAMES[13], okm and okh, f"{whym}; {whyh}")
+    t.check(NAMES[15], okm and okh, f"{whym}; {whyh}")

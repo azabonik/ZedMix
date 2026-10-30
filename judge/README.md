@@ -42,18 +42,21 @@ python3 -I judge/run.py --strict --require-trace   # not applicable and not obse
 python3 -I judge/run.py --graphics-addon /tmp/judge-addon   # the add-on that fixtures/graphics-addon/install.sh made
 python3 -I judge/run.py --whisper /tmp/judge-whisper        # the recogniser that fixtures/whisper/install.sh made
 python3 -I judge/run.py --release v0.2.0 --build /path/to/v0.2.0   # grade the v0.2.0 release as itself
+python3 -I judge/run.py --release rewrite --build /path/to/rewrite  # grade a rewrite: no known bug is excused
 python3 -I judge/run.py --as-user zjudge --scratch /srv/judge/scratch --strict --require-trace --build /home/zjudge/build \
     --graphics-addon /srv/judge/addon --whisper /srv/judge/whisper
                                              # as CI runs it: the adapter and the editor as the user zjudge (below)
 python3 -I judge/run.py --allow-unprotected  # not Linux: run without the /proc protection (JUDGE line says UNPROTECTED)
 ```
 
-`--release` names the release the build is graded as: `zedmix` (the default: this product line's current release,
-and a rewrite of it) or `v0.2.0` (the v0.2.0 release). The judge holds what each
-release is (its names, in `tests/test_cli_migrate.py`), and the tests that depend on it grade against the release
-given here, never against what the build or the adapter says it is: a build run with the default must install
-ZedMix's skill and migrate the v0.2.0 release's configuration, so a rewrite that still installs the v0.2.0 release's names fails. CI
-passes `--release zedmix` (the lock covers that line); a run on the v0.2.0 release passes `--release v0.2.0`.
+`--release` names the release the build is graded as: `zedmix` (the default: this product line's current release),
+`v0.2.0` (the v0.2.0 release) or `rewrite` (a clean-room rewrite of the current release: ZedMix's names, and no known
+bug excused). The judge holds what each release is (its names, in `tests/test_cli_migrate.py`; its known bugs, in
+each test's `KNOWN_BUGS`: see "Known bugs"), and the tests that depend on it grade against the release given here,
+never against what the build or the adapter says it is: a build run with the default or `rewrite` must install
+ZedMix's skill and migrate the v0.2.0 release's configuration, so a rewrite that still installs the v0.2.0 release's
+names fails. CI passes `--release zedmix` while it grades this line (the lock covers that line), and passes
+`--release rewrite` once it grades the rewrite; a run on the v0.2.0 release passes `--release v0.2.0`.
 
 Without `--as-user` (a local run) the adapter, the editor and everything they start run as your own user, and the runner
 prints a note that says so: the judge's same-user defences apply (see "Threat model"), and so do their gaps. `--as-user
@@ -123,6 +126,24 @@ A check passes or fails, or it is not made, for one of two reasons, each printed
   the download check of every test that starts the editor, and `test_network_hosts`' file-system trace checks.
   `--require-trace` makes each one a failure; `judge.yml` passes it.
 
+### Known bugs
+
+A rule the protocol states can be one that a release of this product line is known to break, by Anthony's ruling,
+while a rewrite must keep it. A test lists such a check in `KNOWN_BUGS` ({check name: {release: reason}}) and records
+it with `t.check(name, ok, detail, known_bug=KNOWN_BUGS[name])`. The release is the runner's input (`--release`),
+never the adapter's or the build's word. For a listed release:
+
+- a failure is recorded as a **known bug** (`KBUG`): printed with its name and the reason, counted on the `JUDGE` line
+  (`JUDGE: 18/18 passed, 1 known bug`), never counted as a pass, and it does not fail the run, also with `--strict`;
+- a pass counts as a pass, and the runner prints `judge: KNOWN BUG PASSED: <test>: <check>: ...` and adds `, 1 KNOWN
+  BUG PASSED (remove the entry)` to the `JUDGE` line: the release no longer has the bug, and its entry must go.
+
+For a release that is not listed (`rewrite`, for every entry) the check is an ordinary one and must pass. The one
+entry now: `test_bleep_words`' "the first dry run leaves the undo and the redo history as they were (making a
+transcript is not an edit)", for `v0.2.0` and `zedmix`: their first `bleep_words` dry run keeps the transcript it makes
+as an undo step that changes nothing in the State, so the redo history is lost and the next undo does nothing visible
+(Anthony's ruling of 2026-10-30; PROTOCOL.md, `bleep_words`; PORTING.md, batch 4b).
+
 ### A test rerun after strace failed
 
 strace itself can fail while the editor runs. strace 6.8 (Ubuntu 24.04's) does so when a thread stops for a signal
@@ -178,8 +199,8 @@ copy with the copied gate, installs FFmpeg and `strace` from apt, installs the g
 as the runner's user with the copy's `fixtures/graphics-addon/install.sh` (see "The graphics add-on"; it ends
 read-only), installs the speech recogniser into `/srv/judge/whisper` the same way with the copy's
 `fixtures/whisper/install.sh` (see "The speech recogniser": the binary built from the pinned commit in this job, the
-model from an actions cache keyed on its sha256 or from its pinned URL, checked by sha256 before it is used; it ends
-read-only), and makes the build user `zjudge`: no `sudo`, only its own group, its own home, and no cron or at jobs (it
+model downloaded in this job from its pinned Hugging Face revision URL and checked by size and sha256 before it is
+installed; nothing comes from an actions cache; it ends read-only), and makes the build user `zjudge`: no `sudo`, only its own group, its own home, and no cron or at jobs (it
 is added to `/etc/cron.deny` and `/etc/at.deny`; the step fails when `/etc/cron.allow` or `/etc/at.allow` is there,
 since either makes the deny file ignored). It makes `/srv/judge` (the runner's, mode 0755) for the judge's scratch
 folders, and runs `lockout.py` (below) for `zjudge`. Then it runs `run.py --self-test --require-trace --as-user zjudge`
@@ -214,8 +235,8 @@ artifact. `ci.yml` runs the lock gate on the checkout as well, so deleting `judg
 `lockout.py --user zjudge [--kill] [--fail-if-writable DIR] PATH...` proves that `zjudge` cannot change what the judge
 and the steps after it rely on. `judge.yml` gives it the judge's copy, its own step's file-command files (`$GITHUB_ENV`,
 `$GITHUB_PATH`, `$GITHUB_OUTPUT`, `$GITHUB_STEP_SUMMARY` and their folder under `$RUNNER_TEMP/_runner_file_commands`),
-the setup-node toolchain, every folder on `PATH`, the runner's home, the workspace, `/srv/judge` and the speech model's
-cache folder (`$RUNNER_TEMP/whisper-model`). For every folder
+the setup-node toolchain, every folder on `PATH`, the runner's home, the workspace and `/srv/judge` (which holds the
+add-on and the speech recogniser). For every folder
 and regular file under each of them, and every folder above them, it takes away the write bit for others where it is set
 (`chmod o-w`; not on a sticky folder above them, such as `/tmp`), then, as `zjudge`, tries to open each file for
 writing, to add a file to each folder and to change each one's mode (nothing is written, and an added file is removed
@@ -390,8 +411,10 @@ def run(t):
   1080p in `long.mp4`) only when a test of the run names it: `EXTRA_MEDIA = ("idx.mp4", "long.mp4")` at the top of the
   test. `t.media` of an optional fixture that no test of the run named fails, and a name that is not an optional
   fixture refuses the run.
-- `t.release` is the release the build is graded as (`run.py --release`: `zedmix` or `v0.2.0`). A test whose
-  expectations depend on the release takes them from it, never from what the build or the adapter reports.
+- `t.release` is the release the build is graded as (`run.py --release`: `zedmix`, `v0.2.0` or `rewrite`). A test
+  whose expectations depend on the release takes them from it, never from what the build or the adapter reports.
+- `t.check(name, ok, detail, known_bug={release: reason})` records a check that a listed release is known to fail
+  (the test's `KNOWN_BUGS`; see "Known bugs"): a known bug for a listed release, an ordinary check for any other.
 - `t.driver(whisper=True)` gives the editor the judge's speech recogniser in `start` (see "The speech recogniser").
   `t.whisper` is it (`{"root", "bin", "model"}`), or None when the judge has none; the test then records each check
   that needs it with `t.not_applicable(name, t.whisper_why)`. Without the argument the editor starts with none (its
@@ -489,7 +512,7 @@ commit hash in `fixtures/whisper/pin.json` (GitHub's tag archives are not byte-s
 `ggml-tiny.en.bin` model pinned by its size, its sha256 and a Hugging Face revision URL (the sha256 is the one Hugging
 Face reports for that file at that revision). `install.sh` fetches the commit (`git fetch --depth 1 origin <commit>`)
 and checks `HEAD` and a clean tree, builds `whisper-cli` with `pin.json`'s cmake flags (static, and not tuned to the
-computer that builds it, so a cached build cannot stop with an illegal instruction on another runner; it still needs
+computer that builds it, so a binary built on one computer cannot stop with an illegal instruction on another; it needs
 SSE4.2, AVX, AVX2, FMA, F16C and BMI2: a Haswell or later x86-64, as GitHub's runners are), checks that the binary is
 static and names the commit, installs the model after its size and sha256 check, writes `manifest.json` (the commit,
 the binary's and the model's sha256, the compiler and cmake versions) and makes the folder read-only. `--src`,
@@ -559,10 +582,14 @@ What it defends against:
 - **A speech recogniser that the change under test provides**: the recogniser the editor transcribes with is the
   judge's, built and installed by the runner's user from the judge's own pins (whisper.cpp's commit, fetched by its
   hash and checked; the model's size and sha256) before any code from the change runs, read-only, under `/srv/judge`,
-  where `lockout.py` proves `zjudge` can change nothing. The binary is built in the job, never restored from a cache
-  (an actions cache entry can be written by another workflow's job that runs the change's code); the model may come
-  from a cache, and is checked by its sha256 before it is installed (a cached copy that fails the check is fetched
-  again). `run.py` checks the commit and both sha256s again at start and refuses an install `zjudge` could change.
+  where `lockout.py` proves `zjudge` can change nothing. Neither comes from an actions cache (a cache entry can be
+  written by another workflow's job that runs the change's code, its archive can hold paths outside its folder, and
+  its key is not a check of its content): the binary is built in the job from the pinned commit, and the model is
+  downloaded in the job from its pinned revision URL and checked by size and sha256 before it is installed. `run.py`
+  checks the commit and both sha256s again at start and refuses an install `zjudge` could change. The binary's own
+  sha256 is checked only against the install's manifest, which the runner's user wrote in the same job, not against a
+  pin, because the bytes depend on the compiler (see "The speech recogniser"): a point of trust in the runner image's
+  compiler and in whisper.cpp's build at that commit.
 - **Edits to the judge, its gate or its workflow** that do not show as a `JUDGE.lock` change: the lock gate fails in
   `ci.yml` and in `judge.yml`. An edit together with a lock update passes the gate; it is visible in the diff, where
   the gauntlet's review of the pull request (with its lock and leakage check) sees it, and nothing more stops it.
@@ -761,17 +788,21 @@ What it does not defend against:
   which the adapter makes, so an adapter that decodes the file with its own FFmpeg and answers with the right levels
   (and the right refusals, which depend only on what was imported and on the request) passes `test_peaks` without the
   editor. The checks hold the answer to what the file holds, not to who worked it out.
-- `bleep_words` worked out by the adapter from other operations of the editor: an adapter that runs its own speech
-  recogniser on the clip's source file (the judge's recogniser, whose paths `start` gives it, or another), matches the
-  words itself, answers `get_transcript` and the hits with what it found, removes the clip's bleeps with
-  `remove_bleeps` and adds one per hit with `add_bleep` (its window padded as the editor pads it, on the linked sound
-  clip when the clip given is a silent picture), and answers the `undo` and `redo` that follow with as many of the
-  editor's own as it made steps, passes `test_bleep_words` (the lying adapter `own2` passes all 14 of its checks;
-  without the undo grouping, `own`, it fails the undo checks). The checks hold the transcript, the hits and the
-  bleeps to what the export plays, not to who worked them out. An adapter that answers a transcript or hits without
-  the editor's bleeps fails on the export (PORTING.md, batch 4b). Where the recogniser finds no word, `test_bleeps`
-  still holds `bleep_words` to doing nothing (its media are tones, and it starts the editor with no recogniser); an
-  adapter that refuses it there without asking the editor passes that check.
+- `bleep_words` worked out by the adapter from other operations of the editor. No speech recogniser is needed for it:
+  the recording and its layout are committed under `judge/` (`fixtures/speech/`, and the test's `LAYOUT`), so the
+  words and their times are known in advance. An adapter that answers `get_transcript` and the hits from a copy of
+  them written into it (the lying adapter `canned`), or from its own recogniser run on the clip's source file (the
+  judge's, whose paths `start` gives it, or another: `own2`), matches the user's words itself, removes the clip's
+  bleeps with `remove_bleeps` and adds one per hit with `add_bleep` (its window padded as the editor pads it, on the
+  linked sound clip when the clip given is a silent picture), and answers the `undo` and `redo` that follow with as
+  many of the editor's own as it made steps, passes `test_bleep_words` without the editor's `bleep_words` (`canned`
+  and `own2` pass all 16 of its checks, on every release, and as they never ask the editor for a dry run, `--release
+  zedmix` and `v0.2.0` report the first dry run's known bug as KNOWN BUG PASSED; without the undo grouping, `own`, it
+  fails the undo checks). The checks hold the transcript, the hits and the bleeps to what the export plays, not to who
+  worked them out. An adapter that answers a transcript or hits without the editor's bleeps fails on the export
+  (PORTING.md, batch 4b). Where the recogniser finds no word, `test_bleeps` still holds `bleep_words` to doing nothing
+  (its media are tones, and it starts the editor with no recogniser); an adapter that refuses it there without asking
+  the editor passes that check.
 - The speech recogniser's build: `install.sh` runs whisper.cpp's own cmake build at the pinned commit as the runner's
   user (which has passwordless `sudo`), so that commit's build scripts are trusted as the runner image's programs are.
   The binary's bytes are not pinned (they depend on the compiler), only checked against the install's own manifest.

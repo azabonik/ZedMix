@@ -23,7 +23,9 @@ failure with --strict), and a --graphics-addon folder with another Remotion vers
 test that asks for the speech recogniser records its check as not applicable without one (a failure with --strict); a
 --whisper folder with no manifest, a manifest naming another commit, a binary whose sha256 is not the manifest's or that
 does not name the pinned commit, or a model of another size or (at the pinned size) another sha256 is refused; with
-JUDGE_WHISPER naming an install the runner accepts, the adapter gets its binary and model in start. The
+JUDGE_WHISPER naming an install the runner accepts, the adapter gets its binary and model in start. A check a test
+lists as a known bug of a release (known_bug_units) is a known bug for that release when it fails (also with
+--strict), a pass that says its entry is stale when it passes, and an ordinary check for a release not listed. The
 download tripwire: an adapter that starts a DNS lookup (a UDP connect to 192.0.2.1 port 53), makes a UDP connect to
 192.0.2.1 port 9 and writes with write(), sends with sendto() to 192.0.2.1 port 9, or starts a TCP connect to 192.0.2.1
 port 80 fails the run's "nothing was downloaded" check. The adapter cannot reach the trace: one that starts a DNS lookup
@@ -1574,6 +1576,42 @@ def look_units(s):
            {p: (v[:20] if v else v) for p, v in rd.items()})
 
 
+def known_bug_units(s):
+    """Known bugs (README.md, "Known bugs"; T.check's known_bug): for a release the entry lists, a failed check is a
+    known bug (neither passed nor failed, also with --strict, and the run passes) and a passed one a pass whose detail
+    says the entry is stale; for a release it does not list (rewrite) the same check fails or passes as any other. The
+    record is one of the pipe's shapes only as a test's own check (not on a harness check), and a not applicable or
+    not observed record still needs ok true."""
+    import io
+    import run
+    t = object.__new__(run.T)
+    t._out, t.n_checks = io.StringIO(), 0
+    entry = {"v0.2.0": "the reason", "zedmix": "the reason"}
+    for rel, ok in (("v0.2.0", False), ("zedmix", True), ("rewrite", False), ("rewrite", True)):
+        t.release = rel
+        t.check(f"c {rel} {ok}", ok, "seen", known_bug=entry)
+    recs = [json.loads(ln) for ln in t._out.getvalue().splitlines()]
+    got = [run.status_of(r, strict=True, require_trace=True) for r in recs]
+    s.unit("known bug: a listed release's failure is a known bug with its reason (also with --strict), its pass a pass "
+           "that says the entry is stale; an unlisted release (rewrite) fails or passes the check as any other",
+           [g[0] for g in got] == ["known bug", "pass", "fail", "pass"]
+           and "the reason" in got[0][1] and got[1][1].startswith(run.KNOWN_BUG_PASSED)
+           and not got[3][1].startswith(run.KNOWN_BUG_PASSED) and [r.get("status") for r in recs] ==
+           ["known_bug", "known_bug", None, None], [recs, got])
+    shapes = [recs[0], recs[1], {**recs[0], "harness": True}, {"check": "x", "ok": False, "detail": "",
+                                                               "status": "not_applicable"}]
+    s.unit("known bug: its record is a test's check record (with ok false or true), never a harness check's; not "
+           "applicable still needs ok true",
+           [run.known_record(r, 1, 3) for r in shapes] == [True, True, False, False],
+           [run.known_record(r, 1, 3) for r in shapes])
+    v = run.verdict([{"declare": 2}, recs[0], recs[2], {"end": True}], False, 0, 1, [], True, strict=True)
+    kb = [c for c in v if c["check"] == recs[0]["check"]]
+    s.unit("known bug: the verdict lists it as a known bug, which does not fail the run (_passed), and not as a pass",
+           len(kb) == 1 and kb[0]["status"] == "known bug" and kb[0]["ok"] is False and run._passed(kb[0])
+           and run.LABEL["known bug"] == "KBUG"
+           and [c["status"] for c in v if c["check"] == recs[2]["check"]] == ["fail"], v)
+
+
 def lockout_units(s):
     """lockout.py's parts that need no other user (judge.yml runs it for zjudge). A file that was listed and is gone
     when tighten reaches it is skipped and named only in a diagnostic-log folder of the runner's (GitHub's runner
@@ -2070,6 +2108,7 @@ def main(run_py, parent=None, allow_unprotected=False, require_trace=False, as_u
                       flush=True)
         sys.path.insert(0, JUDGE)
         lockout_units(s)
+        known_bug_units(s)
         ci_scripts(s)
         # The form of an strace line (observe.strace_line_problem): text joined to strace's own line in front or in
         # the middle cannot hide a call.
