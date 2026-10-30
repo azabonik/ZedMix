@@ -144,9 +144,9 @@ def hits_ok(hits, clip, targets, bleep):
         "each with a bleep" if bleep else "with no bleep")
 
 
-def at_words(hits, words):
-    """(ok, detail): each hit's start and end are its transcript word's times, and are near its word's voiced extent
-    (the bounds above)."""
+def at_words(hits, words, targets):
+    """(ok, detail): each hit is of one of the targets, its start and end are its transcript word's times, and they are
+    near its word's voiced extent (the bounds above)."""
     if not isinstance(words, list):
         return False, f"no transcript ({words!r})"
     by = {norm(w.get("text")): w for w in words if isinstance(w, dict)}
@@ -160,7 +160,7 @@ def at_words(hits, words):
             ok = False
             notes.append(f"{t}: start/end {h.get('start')!r}/{h.get('end')!r} <-")
             continue
-        if t not in TARGETS or w is None:
+        if t not in targets or w is None:
             ok = False
             notes.append(f"{t}: not a target word in the transcript <-")
             continue
@@ -288,7 +288,7 @@ def run(t):
     t.check(NAMES[3], ok, ("; ".join(notes) if notes else f"transcript {E.short(words, 300)}")
             + f" (start from {TR_EARLY} s before the voiced start to {TR_LATE} s after its end; end no later than "
               f"{TR_LATE} s after the next word's voiced end)")
-    ok, why = at_words(dhits, words)
+    ok, why = at_words(dhits, words, TARGETS)
     t.check(NAMES[4], ok, why)
 
     # ---------------------------------------------------------------- the real run, its undo, the export
@@ -324,8 +324,9 @@ def run(t):
     ok, why = hits_ok(hits2, A, {"window"}, bleep=True)
     bs = bleeps_of(st2, A)
     okb, whyb = bleeps_around(st2, A, hits2 if ok else None)
-    t.check(NAMES[9], ok and okb and len(bs) == 1 and not first & {b.get("id") for b in bs},
-            f"{why}; {whyb}; the first run's bleeps {sorted(first)}")
+    okw, whyw = at_words(hits2 if ok else None, words, {"window"})
+    t.check(NAMES[9], ok and okb and okw and len(bs) == 1 and not first & {b.get("id") for b in bs},
+            f"{why}; {whyw}; {whyb}; the first run's bleeps {sorted(first)}")
     (okm, whym), (okh, whyh) = heard(t, src, export(t, d, "rerun"), {"window"})
     t.check(NAMES[10], okm and okh, f"{whym}; {whyh}")
     d.undo()
@@ -365,7 +366,8 @@ def run(t):
     st3 = d.get_state()
     ok, why = hits_ok(hits3, Aa, {"pencil"}, bleep=True)
     okb, whyb = bleeps_around(st3, Aa, hits3 if ok else None)
-    t.check(NAMES[14], ok and okb and bleeps_of(st3, A) == [],
-            f"{why}; on the sound clip: {whyb}; on the picture: {short_bleeps(bleeps_of(st3, A))}")
+    okw, whyw = at_words(hits3 if ok else None, words, {"pencil"})
+    t.check(NAMES[14], ok and okb and okw and bleeps_of(st3, A) == [],
+            f"{why}; {whyw}; on the sound clip: {whyb}; on the picture: {short_bleeps(bleeps_of(st3, A))}")
     (okm, whym), (okh, whyh) = heard(t, src, export(t, d, "linked"), {"pencil"})
     t.check(NAMES[15], okm and okh, f"{whym}; {whyh}")

@@ -778,6 +778,7 @@ with one known bug on this tree and v0.2.0 with both FFmpegs, and 19 of 20 with 
 | puts the bleeps on the clip it was given (`add_bleep` on the picture of the linked pair: `given`) | 8 of 19: its several `add_bleep` steps fail the undo checks and what follows them, and both linked checks | |
 | answers the hits' times in timeline seconds (`timeline`) | 4 of 19: the hits' place, the bleeps around the hits (1 s off), the re-run's and the linked run's bleeps | |
 | answers the hits with the bleeps' padded windows instead of the words' times (the verifier's `padded`) | 1 of 19: the hits' place (not the transcript's times) | |
+| on every real run with one word (the re-run and the linked run), answers each hit 0.15 s inside its word at each end, still inside its bleep (`inside`) | 2 of 19: the re-run and the linked run (each hit is held to its transcript word's times, as the first run's are) | |
 | bleeps other words and reports the asked-for words with those bleep ids (the verifier's `wrongw`) | 7 of 19: the real run, both base exports, the re-run, its export, the linked run and its export | |
 | bleeps only the first half of each word (`set_bleep` after the run: the verifier's `half`) | 10 of 19: the bleeps around the hits, the undo checks and what follows them, every export that should bleep | |
 | hands in the previous export for each export (`stale`) | 3 of 19: every export after the first (window, the undone export, the linked export) | |
