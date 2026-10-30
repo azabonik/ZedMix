@@ -73,9 +73,9 @@ strace probe fails and the trace checks are not observed. That strace is `JUDGE_
 or a folder above it (the other user owns one, or may write one), or a folder that holds a symbolic link on the way to
 it.
 
-The runner prints one line per check (`PASS`, `FAIL`, `N/A` or `N/O`, see "Statuses"), then
-`JUDGE: <passed>/<judged> passed`, followed by `, <n> not applicable`, `, <n> not observed` and `, <n> flaky (strace)`
-when there are any. It exits 1 when any check fails, when a test does not finish within its timeout, when there are no
+The runner prints one line per check (`PASS`, `FAIL`, `N/A`, `N/O` or `KBUG`, see "Statuses" and "Known bugs"), then
+`JUDGE: <passed>/<judged> passed`, followed by `, <n> not applicable`, `, <n> not observed`, `, <n> known bug`,
+`, <n> KNOWN BUG PASSED (remove the entry)` and `, <n> flaky (strace)` when there are any. It exits 1 when any check fails, when a test does not finish within its timeout, when there are no
 checks, or when the runner or a test process cannot be made non-dumpable (see "Threat model") and
 `--allow-unprotected` is not given. A test that ran twice because strace failed in its first run is judged on its
 second run only (see "A test rerun after strace failed").
@@ -135,8 +135,9 @@ never the adapter's or the build's word. For a listed release:
 
 - a failure is recorded as a **known bug** (`KBUG`): printed with its name and the reason, counted on the `JUDGE` line
   (`JUDGE: 18/18 passed, 1 known bug`), never counted as a pass, and it does not fail the run, also with `--strict`;
-- a pass counts as a pass, and the runner prints `judge: KNOWN BUG PASSED: <test>: <check>: ...` and adds `, 1 KNOWN
-  BUG PASSED (remove the entry)` to the `JUDGE` line: the release no longer has the bug, and its entry must go.
+- a pass counts as a **failure** (the run fails), and the runner prints `judge: KNOWN BUG PASSED: <test>: <check>: ...`
+  and adds `, 1 KNOWN BUG PASSED (remove the entry)` to the `JUDGE` line: the release no longer has the bug, and the
+  change that fixes it must also remove its entry (Anthony's ruling of 2026-10-30), so no stale excuse stays.
 
 For a release that is not listed (`rewrite`, for every entry) the check is an ordinary one and must pass. The one
 entry now: `test_bleep_words`' "the first dry run leaves the undo and the redo history as they were (making a
@@ -793,11 +794,11 @@ What it does not defend against:
   words and their times are known in advance. An adapter that answers `get_transcript` and the hits from a copy of
   them written into it (the lying adapter `canned`), or from its own recogniser run on the clip's source file (the
   judge's, whose paths `start` gives it, or another: `own2`), matches the user's words itself, removes the clip's
-  bleeps with `remove_bleeps` and adds one per hit with `add_bleep` (its window padded as the editor pads it, on the
+  bleeps with `remove_bleeps` and adds one per hit with `add_bleep` (its window padded by any amount the bleep checks allow, on the
   linked sound clip when the clip given is a silent picture), and answers the `undo` and `redo` that follow with as
   many of the editor's own as it made steps, passes `test_bleep_words` without the editor's `bleep_words` (`canned`
   and `own2` pass all 16 of its checks, on every release, and as they never ask the editor for a dry run, `--release
-  zedmix` and `v0.2.0` report the first dry run's known bug as KNOWN BUG PASSED; without the undo grouping, `own`, it
+  zedmix` and `v0.2.0` report the first dry run's known bug as KNOWN BUG PASSED, which fails the run there; without the undo grouping, `own`, it
   fails the undo checks). The checks hold the transcript, the hits and the bleeps to what the export plays, not to who
   worked them out. An adapter that answers a transcript or hits without the editor's bleeps fails on the export
   (PORTING.md, batch 4b). Where the recogniser finds no word, `test_bleeps` still holds `bleep_words` to doing nothing

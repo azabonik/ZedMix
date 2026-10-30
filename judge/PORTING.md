@@ -759,8 +759,8 @@ build's, and `test_bleep_words` passes 18 of 18 with it there.
 
 Each wraps the v0.2.0 adapter and changes one thing, on this tree with FFmpeg 4.4 and tiny.en (`--strict
 --require-trace`); the counts are the checks that failed of the test's 16 with the runner's four, graded as
-`--release zedmix` (the first dry run's history is then a known bug: not counted when it fails, a KNOWN BUG PASSED
-when it passes) and, where it matters, as `--release rewrite` (no known bug excused). The real adapter passes 19 of 19
+`--release zedmix` (the first dry run's history is then a known bug: not counted when it fails, a KNOWN BUG PASSED,
+which fails the run, when it passes) and, where it matters, as `--release rewrite` (no known bug excused). The real adapter passes 19 of 19
 with one known bug on this tree and v0.2.0 with both FFmpegs, and 19 of 20 with `--release rewrite` (the known bug).
 
 | Lying adapter | zedmix | rewrite |
@@ -797,7 +797,7 @@ version of both lost track at the undo past the placement and failed three check
   transcript is not an edit)" is listed in `test_bleep_words`' `KNOWN_BUGS` for `--release v0.2.0` and `zedmix`
   (README, "Known bugs"): reported as KNOWN BUG with that reason, never counted as a pass, not failing the run (also
   with `--strict`); `--release rewrite` must pass it (both trees fail it there, 19 of 20). A listed release that
-  passes it is reported as KNOWN BUG PASSED, so the entry is removed. The new check "no hidden step" holds the rule
+  passes it is reported as KNOWN BUG PASSED and fails the run (Anthony's ruling), so the entry is removed. The new check "no hidden step" holds the rule
   whenever the transcript is made: after the runs' undos, one more undo still changes the State.
 - Rule 2 (whole words only) is judged: the decoys "rive" and "apples" reach river and apple, which are not targets
   (the verifier's `stem` adapter, which passed every check of round 1, fails 5 checks, 6 as `rewrite`).

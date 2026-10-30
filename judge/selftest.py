@@ -1578,8 +1578,8 @@ def look_units(s):
 
 def known_bug_units(s):
     """Known bugs (README.md, "Known bugs"; T.check's known_bug): for a release the entry lists, a failed check is a
-    known bug (neither passed nor failed, also with --strict, and the run passes) and a passed one a pass whose detail
-    says the entry is stale; for a release it does not list (rewrite) the same check fails or passes as any other. The
+    known bug (neither passed nor failed, also with --strict, and the run passes) and a passed one a failure whose
+    detail says the entry is stale; for a release it does not list (rewrite) the same check fails or passes as any other. The
     record is one of the pipe's shapes only as a test's own check (not on a harness check), and a not applicable or
     not observed record still needs ok true."""
     import io
@@ -1592,9 +1592,9 @@ def known_bug_units(s):
         t.check(f"c {rel} {ok}", ok, "seen", known_bug=entry)
     recs = [json.loads(ln) for ln in t._out.getvalue().splitlines()]
     got = [run.status_of(r, strict=True, require_trace=True) for r in recs]
-    s.unit("known bug: a listed release's failure is a known bug with its reason (also with --strict), its pass a pass "
-           "that says the entry is stale; an unlisted release (rewrite) fails or passes the check as any other",
-           [g[0] for g in got] == ["known bug", "pass", "fail", "pass"]
+    s.unit("known bug: a listed release's failure is a known bug with its reason (also with --strict), its pass a "
+           "failure that says the entry is stale; an unlisted release (rewrite) fails or passes the check as any other",
+           [g[0] for g in got] == ["known bug", "fail", "fail", "pass"]
            and "the reason" in got[0][1] and got[1][1].startswith(run.KNOWN_BUG_PASSED)
            and not got[3][1].startswith(run.KNOWN_BUG_PASSED) and [r.get("status") for r in recs] ==
            ["known_bug", "known_bug", None, None], [recs, got])
@@ -1610,6 +1610,11 @@ def known_bug_units(s):
            len(kb) == 1 and kb[0]["status"] == "known bug" and kb[0]["ok"] is False and run._passed(kb[0])
            and run.LABEL["known bug"] == "KBUG"
            and [c["status"] for c in v if c["check"] == recs[2]["check"]] == ["fail"], v)
+    v2 = run.verdict([{"declare": 1}, recs[1], {"end": True}], False, 0, 1, [], True, strict=True)
+    kp = [c for c in v2 if c["check"] == recs[1]["check"]]
+    s.unit("known bug: a listed release that passes the check fails the run (the entry is stale and must be removed)",
+           len(kp) == 1 and kp[0]["status"] == "fail" and not run._passed(kp[0])
+           and kp[0]["detail"].startswith(run.KNOWN_BUG_PASSED), v2)
 
 
 def lockout_units(s):

@@ -63,9 +63,9 @@ observed"). --strict turns not applicable into a failure, --require-trace turns 
 A check can also be a KNOWN BUG: a test lists in KNOWN_BUGS, per check and per release, a bug that release is known
 to have (T.check's known_bug); when the release under test (--release) is listed and the check fails, it is recorded
 as a known bug with the reason, printed by name, counted on the JUDGE line (", 1 known bug") and never as a pass, and
-it does not fail the run, also with --strict. When a listed release passes it, it counts as a pass and the runner
-prints "judge: KNOWN BUG PASSED: ..." and adds ", 1 KNOWN BUG PASSED (remove the entry)" to the JUDGE line, so the
-stale entry is removed. A release that is not listed (rewrite, for every entry) is held to the check as to any other.
+it does not fail the run, also with --strict. When a listed release passes it, it counts as a failure (the run fails)
+and the runner prints "judge: KNOWN BUG PASSED: ..." and adds ", 1 KNOWN BUG PASSED (remove the entry)" to the JUDGE
+line, so the stale entry is removed in the change that fixes the bug. A release that is not listed (rewrite, for every entry) is held to the check as to any other.
 
 Downloads: every test that starts the editor runs its adapter under strace (JUDGE_STRACE names it; empty means none,
 else the strace on PATH, or under --as-user the one in SYSTEM_PATH), with the network calls traced and io_uring
@@ -1611,19 +1611,20 @@ def known_record(r, i, n):
     return False
 
 
-# The detail of a known-bug check that passed: the release no longer has the bug, and its entry must go.
-KNOWN_BUG_PASSED = "PASSED, BUT LISTED AS A KNOWN BUG of this release: remove the test's KNOWN_BUGS entry"
+# The detail of a known-bug check that passed: the release no longer has the bug, and its entry must go (a failure
+# until it does, by Anthony's ruling of 2026-10-30, so no stale excuse stays).
+KNOWN_BUG_PASSED = "PASSED, BUT LISTED AS A KNOWN BUG of this release: a failure until the test's KNOWN_BUGS entry is removed"
 LABEL = {"pass": "PASS", "fail": "FAIL", "not applicable": "N/A ", "not observed": "N/O ", "known bug": "KBUG"}
 
 
 def status_of(r, strict=False, require_trace=False):
     """(status, detail) of a check record: pass, fail, not applicable, not observed or known bug; --strict and
     --require-trace turn not applicable and not observed into failures, and nothing turns a known bug into one. A
-    known-bug check that passed is a pass whose detail says the entry is stale (KNOWN_BUG_PASSED)."""
+    known-bug check that passed is a failure whose detail says the entry is stale (KNOWN_BUG_PASSED)."""
     detail = r.get("detail") or ""
     st = r.get("status")
     if st == "known_bug":
-        return ("pass", f"{KNOWN_BUG_PASSED}: {detail}") if r.get("ok") is True else \
+        return ("fail", f"{KNOWN_BUG_PASSED}: {detail}") if r.get("ok") is True else \
             ("known bug", f"KNOWN BUG, not counted as a pass: {detail}")
     if st == "not_applicable":
         return ("fail", f"not applicable, a failure with --strict: {detail}") if strict else \
@@ -2116,12 +2117,12 @@ def main():
               "counted as passes; a release that is not listed must pass them: README.md, \"Known bugs\"):")
         for c in named:
             print(f"judge:   {c['test']}: {c['check']}  -- {_short(c.get('detail') or '', 400)}")
-    stale = [c for c in results if c["status"] == "pass" and (c.get("detail") or "").startswith(KNOWN_BUG_PASSED)]
+    stale = [c for c in results if c["status"] == "fail" and (c.get("detail") or "").startswith(KNOWN_BUG_PASSED)]
     if stale:
         counts += f", {len(stale)} KNOWN BUG PASSED (remove the entry)"
         for c in stale:
             print(f"judge: KNOWN BUG PASSED: {c['test']}: {c['check']}: the {a.release} release is listed as having "
-                  "this bug and it passed: remove the test's KNOWN_BUGS entry for it", flush=True)
+                  "this bug and it passed: a failure until the test's KNOWN_BUGS entry for it is removed", flush=True)
     flaky = [r for r in RERUNS if r[2]]
     if flaky:
         counts += f", {len(flaky)} flaky (strace)"
