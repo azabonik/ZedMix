@@ -2,13 +2,14 @@
 # Installs the speech recogniser that the judge gives the editor (judge/README.md, "The speech recogniser"):
 # whisper.cpp's whisper-cli, built from the commit that pin.json names with pin.json's cmake flags (a static binary,
 # not tuned to this computer's processor: it needs SSE4.2, AVX, AVX2, FMA, F16C and BMI2, a Haswell or later x86-64),
-# and the model pin.json names, from its Hugging Face revision URL (its size and sha256 checked before it is
-# installed). Then it writes <dest>/manifest.json (the commit, the binary's and the model's sha256, the compiler and
+# and the model pin.json names, from its Hugging Face revision URL, or from pin.json's mirror (a byte-identical copy on
+# this repository's judge-assets release) when that download fails or does not match (its size and sha256 checked
+# before it is installed, whichever it came from). Then it writes <dest>/manifest.json (the commit, the binary's and the model's sha256, the compiler and
 # cmake versions) and makes <dest> read-only for everyone (the editor only reads it and runs the binary).
 #
 # The source is fetched by its commit hash (git fetch --depth 1 origin <commit>, then HEAD is checked against it),
 # never by tag: a tag can move, and GitHub's tag archives are not byte-stable. It downloads (github.com and
-# huggingface.co), so it runs before the judge, never in a test: judge.yml runs it as the runner's user into
+# huggingface.co, or github.com alone when Hugging Face fails), so it runs before the judge, never in a test: judge.yml runs it as the runner's user into
 # /srv/judge/whisper. --src takes a checkout already on disk (its HEAD must be the pinned commit and its tree clean),
 # --model a copy of the model already on disk (checked the same way), --bin a whisper-cli that a person built from
 # that checkout with pin.json's flags (a local install; nothing is built then, and the manifest says so; CI never
@@ -37,7 +38,8 @@ for k in sys.argv[2].split("."):
     v = v[k]
 print("\n".join(v) if isinstance(v, list) else v)' "$HERE/pin.json" "$1"; }
 REPO="$(pin repository)"; COMMIT="$(pin commit)"; TARGET="$(pin target)"
-MFILE="$(pin model.file)"; MURL="$(pin model.url)"; MSIZE="$(pin model.size)"; MSHA="$(pin model.sha256)"
+MFILE="$(pin model.file)"; MURL="$(pin model.url)"; MMIRROR="$(pin model.mirror)"; MSIZE="$(pin model.size)"
+MSHA="$(pin model.sha256)"
 mapfile -t FLAGS < <(pin cmake_flags)
 CMAKE="${CMAKE:-cmake}"
 JOBS="${JOBS:-$(nproc)}"
@@ -57,13 +59,27 @@ if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=all)" ]; then
   echo "install.sh: $SRC has changes or untracked files: build only the pinned commit as it is" >&2; exit 1
 fi
 
+# model_problem <file>: why the file is not the pinned model (its size, then its sha256), or nothing when it is.
+model_problem() {
+  local got; got="$(stat -c %s "$1" 2>/dev/null || echo none)"
+  if [ "$got" != "$MSIZE" ]; then echo "the model is $got bytes, not $MSIZE"; return; fi
+  echo "$MSHA  $1" | sha256sum -c --quiet - > /dev/null 2>&1 || echo "the model's sha256 is not the pinned one"
+}
 if [ -z "$MODEL" ]; then
   MODEL="$TMP/$MFILE"
-  curl -fsSL --retry 3 --max-time 900 -o "$MODEL" "$MURL"
+  why="" got=""
+  for url in "$MURL" "$MMIRROR"; do
+    rm -f "$MODEL"
+    if ! curl -fsSL --retry 3 --max-time 900 -o "$MODEL" "$url"; then why="$why; $url: the download failed"; continue; fi
+    p="$(model_problem "$MODEL")"
+    if [ -z "$p" ]; then got="$url"; break; fi
+    why="$why; $url: $p"
+  done
+  if [ -z "$got" ]; then echo "install.sh: no pinned model from either source${why}" >&2; exit 1; fi
+  if [ "$got" != "$MURL" ]; then echo "install.sh: the model came from the mirror ($got)${why}" >&2; fi
 fi
-got_size="$(stat -c %s "$MODEL")"
-if [ "$got_size" != "$MSIZE" ]; then echo "install.sh: the model is $got_size bytes, not $MSIZE" >&2; exit 1; fi
-echo "$MSHA  $MODEL" | sha256sum -c --quiet - || { echo "install.sh: the model's sha256 is not the pinned one" >&2; exit 1; }
+p="$(model_problem "$MODEL")"
+if [ -n "$p" ]; then echo "install.sh: $p" >&2; exit 1; fi
 
 if [ -z "$PREBUILT" ]; then
   "$CMAKE" -S "$SRC" -B "$TMP/build" "${FLAGS[@]}" > "$TMP/configure.log" 2>&1 || { cat "$TMP/configure.log" >&2; exit 1; }

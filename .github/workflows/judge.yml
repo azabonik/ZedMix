@@ -173,7 +173,9 @@ jobs:
       # commit hash (never a tag) and checks HEAD against it, builds
       # whisper-cli with the pinned flags (static, not tuned to this CPU) with
       # the runner image's cmake and compiler, downloads the model from its
-      # pinned Hugging Face revision URL and installs it only after checking
+      # pinned Hugging Face revision URL (or, when that fails, from the
+      # byte-identical copy on this repository's judge-assets-1 release, which
+      # only a maintainer can change) and installs it only after checking
       # its size and sha256; the folder ends read-only and lockout.py proves
       # zjudge can change none of it. Nothing comes from an actions cache: a
       # cache entry can be written by another workflow's job that runs the

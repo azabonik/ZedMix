@@ -200,8 +200,8 @@ copy with the copied gate, installs FFmpeg and `strace` from apt, installs the g
 as the runner's user with the copy's `fixtures/graphics-addon/install.sh` (see "The graphics add-on"; it ends
 read-only), installs the speech recogniser into `/srv/judge/whisper` the same way with the copy's
 `fixtures/whisper/install.sh` (see "The speech recogniser": the binary built from the pinned commit in this job, the
-model downloaded in this job from its pinned Hugging Face revision URL and checked by size and sha256 before it is
-installed; nothing comes from an actions cache; it ends read-only), and makes the build user `zjudge`: no `sudo`, only its own group, its own home, and no cron or at jobs (it
+model downloaded in this job from its pinned Hugging Face revision URL, or from the copy on this repository's
+`judge-assets-1` release when that fails, and checked by size and sha256 before it is installed; nothing comes from an actions cache; it ends read-only), and makes the build user `zjudge`: no `sudo`, only its own group, its own home, and no cron or at jobs (it
 is added to `/etc/cron.deny` and `/etc/at.deny`; the step fails when `/etc/cron.allow` or `/etc/at.allow` is there,
 since either makes the deny file ignored). It makes `/srv/judge` (the runner's, mode 0755) for the judge's scratch
 folders, and runs `lockout.py` (below) for `zjudge`. Then it runs `run.py --self-test --require-trace --as-user zjudge`
@@ -511,7 +511,10 @@ python3 -I judge/run.py --whisper /tmp/judge-whisper
 The recogniser is whisper.cpp's `whisper-cli`, release v1.9.0 (the release the v0.2.0 editor names), pinned by its
 commit hash in `fixtures/whisper/pin.json` (GitHub's tag archives are not byte-stable, and a tag can move), with the
 `ggml-tiny.en.bin` model pinned by its size, its sha256 and a Hugging Face revision URL (the sha256 is the one Hugging
-Face reports for that file at that revision). `install.sh` fetches the commit (`git fetch --depth 1 origin <commit>`)
+Face reports for that file at that revision). `pin.json`'s `mirror` is a byte-identical copy on this repository's
+`judge-assets-1` pre-release (Anthony's ruling of 2026-10-30: a Hugging Face outage must not block merges); only a
+maintainer can change a release asset, and `install.sh` uses it only when the Hugging Face download fails or does not
+match, with the same size and sha256 check. `install.sh` fetches the commit (`git fetch --depth 1 origin <commit>`)
 and checks `HEAD` and a clean tree, builds `whisper-cli` with `pin.json`'s cmake flags (static, and not tuned to the
 computer that builds it, so a binary built on one computer cannot stop with an illegal instruction on another; it needs
 SSE4.2, AVX, AVX2, FMA, F16C and BMI2: a Haswell or later x86-64, as GitHub's runners are), checks that the binary is

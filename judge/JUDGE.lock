@@ -1,10 +1,10 @@
 # sha256 of every file under judge/ except this one, of scripts/check-judge-lock.mjs and of
 # .github/workflows/judge.yml, sorted by path from the repository root (scripts/check-judge-lock.mjs).
 # The agents that rewrite the editor must not change the judge. The gauntlet reviews a change to this file on its PR.
-81f50ebd384393107ac81bc93c6e7908f585834cf164be8ffbb9d511130eaa89  .github/workflows/judge.yml
+3cdc37876bd8834cfc8174eaf3ab17dd305869a85e676f99dfb6dbeff436a23f  .github/workflows/judge.yml
 29171e8ea200c6ea541dcf31c529c75940d0a32a9d4d4e3390b2b9af3633e05c  judge/PORTING.md
 b1eaf37712870b4ac70e7e71c80f0e7d48756038bd76b7358a757b374482b76a  judge/PROTOCOL.md
-caea6a623aaffa45a3d60f24e8013479f03e0ca9e6f09da75e0b1d1bc11d06c0  judge/README.md
+2c6b54826e2dbb57fc08a1a2d2d9e547d565e1e971f41975e47d04f35e7a9507  judge/README.md
 9f87d47a5759ef2f7d1e95446b803ad756510e10a5cd84e1fbb337d3da9423d9  judge/adapters/v020/adapter.py
 60d050f139e5972a2c91a5133b7fcb3a3f3d85e83fa91d2db23f68d812f80beb  judge/check_observe.py
 6c27d8baf904312890c92162eee77d69246c2073fd3b0c4ee9428d6ca5af2310  judge/ci/collect_logs.sh
@@ -27,8 +27,8 @@ cda4d66767df634c36f35476438b0b2fe54575d01ff8e285e6695401c0b839d2  judge/fixtures
 5952e44a4f35bf44c5a1a617f4ea837927068b020a8bf78d457e91ba41e8e68c  judge/fixtures/v020-otio/manifest.json
 4c6f994fa38583a87ea6ec81030ecff1ecf3db4c1ccbb1f696b813de3115030c  judge/fixtures/v020-otio/params.otio
 c623a4a816d704ae2318996eb9aedf67c07c8306d3d47eb073ea5ae15279b7cd  judge/fixtures/v020-otio/speed.otio
-0049b3b1d95021d671da92f3a05eab5b2de3d859d9eedd1eb08a6f7e19e9725b  judge/fixtures/whisper/install.sh
-42078b97c17f040ef4ede4ea38c95dba181bbe0a36093c733ef530851c89436f  judge/fixtures/whisper/pin.json
+676762047a31815af50fcd3b2285c6bb0fb2251d4e5b7ba3c51b682d83303306  judge/fixtures/whisper/install.sh
+8b8b14b31920c8a3875f79c8672fd5ae97fba84efcdc3dd76e5f80a9afbd5587  judge/fixtures/whisper/pin.json
 2abbe732444163fe4ffa85a88d48820763f392eb1e10ce9a2959ded48c005e24  judge/lockout.py
 d2ef06a5f761e070a49eb83b9dc5ed8d0280b5ace682cb995e5c4b16e20cb9b3  judge/observe.py
 b6b97217026daa5e1632bded31688e403ff0ec300145d9a6d041b9a8851cc4e5  judge/run.py
