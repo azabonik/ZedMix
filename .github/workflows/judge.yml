@@ -187,6 +187,64 @@ jobs:
           bash "$RUNNER_TEMP/judge-src/judge/fixtures/whisper/install.sh" /srv/judge/whisper
           cat /srv/judge/whisper/manifest.json
 
+      # The install above stops at the Hugging Face URL when that works, so on
+      # a normal day the mirror copy is never fetched. This step asks the
+      # GitHub API (no download) for the release that pin.json's model.mirror
+      # names, and checks that it holds the asset model.file with model.size
+      # and model.sha256. A missing release or asset, a size or digest that
+      # differs, or an API failure gives a warning and a line in the job
+      # summary, never a failure: a mirror problem must not block merges,
+      # which is the point of the mirror. The token is this job's own
+      # (contents: read), kept in this step only, before the build user exists.
+      - name: Check the speech model's mirror copy (warns, never fails)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PIN: ${{ runner.temp }}/judge-src/judge/fixtures/whisper/pin.json
+        run: |
+          set +e
+          scratch=$(mktemp -d)
+          problem=""
+          if ! python3 -I -B - "$PIN" > "$scratch/pin" 2> "$scratch/err" <<'PY'
+          import json, sys
+          m = json.load(open(sys.argv[1]))["model"]
+          prefix = "https://github.com/"
+          parts = m["mirror"][len(prefix):].split("/") if m["mirror"].startswith(prefix) else []
+          if len(parts) != 6 or parts[2:4] != ["releases", "download"] or parts[5] != m["file"]:
+              sys.exit("model.mirror is not https://github.com/<owner>/<repo>/releases/download/<tag>/" + m["file"] + ": " + m["mirror"])
+          print(parts[0] + "/" + parts[1], parts[4], m["file"], m["size"], m["sha256"])
+          PY
+          then
+            problem="could not read model.mirror from pin.json: $(tail -n 1 "$scratch/err")"
+          else
+            read -r repo tag file size sha < "$scratch/pin"
+            if ! gh api "repos/$repo/releases/tags/$tag" > "$scratch/release.json" 2> "$scratch/err"; then
+              problem="the GitHub API gave no release $tag in $repo: $(tail -n 1 "$scratch/err")"
+            else
+              problem=$(python3 -I -B - "$scratch/release.json" "$file" "$size" "$sha" <<'PY'
+          import json, sys
+          path, name, size, sha = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+          assets = [a for a in json.load(open(path)).get("assets", []) if a.get("name") == name]
+          if not assets:
+              print("release has no asset named " + name)
+          elif assets[0].get("state") != "uploaded":
+              print(name + " is in state " + str(assets[0].get("state")) + ", not uploaded")
+          elif assets[0].get("size") != size:
+              print(name + " is " + str(assets[0].get("size")) + " bytes, pin.json says " + str(size))
+          elif assets[0].get("digest") != "sha256:" + sha:
+              print(name + " has digest " + str(assets[0].get("digest")) + ", pin.json says sha256:" + sha)
+          PY
+              ) || problem="could not read the API's answer for release $tag"
+            fi
+          fi
+          rm -rf "$scratch"
+          if [ -n "$problem" ]; then
+            echo "::warning title=Speech model mirror::$problem (the fallback for a Hugging Face outage would fail)"
+            { echo "### Speech model mirror"; echo; echo "$problem (the fallback for a Hugging Face outage would fail)"; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "mirror ok: $repo release $tag holds $file, $size bytes, sha256:$sha"
+          fi
+          exit 0
+
       # The build user, before any code from the change runs: zjudge, no sudo,
       # only its own group, and no cron or at jobs (cron.deny, at.deny; an
       # allow file would make them ignored). /srv/judge (the runner's, mode 0755)

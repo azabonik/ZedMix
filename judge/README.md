@@ -201,7 +201,7 @@ as the runner's user with the copy's `fixtures/graphics-addon/install.sh` (see "
 read-only), installs the speech recogniser into `/srv/judge/whisper` the same way with the copy's
 `fixtures/whisper/install.sh` (see "The speech recogniser": the binary built from the pinned commit in this job, the
 model downloaded in this job from its pinned Hugging Face revision URL, or from the copy on this repository's
-`judge-assets-1` release when that fails, and checked by size and sha256 before it is installed; nothing comes from an actions cache; it ends read-only), and makes the build user `zjudge`: no `sudo`, only its own group, its own home, and no cron or at jobs (it
+`judge-assets-1` release when that fails, and checked by size and sha256 before it is installed; nothing comes from an actions cache; it ends read-only; the next step asks the GitHub API, without a download, whether that release still holds the asset with `pin.json`'s size and sha256 digest, and a missing release or asset, a difference or an API failure gives a warning and a job summary line, never a failure), and makes the build user `zjudge`: no `sudo`, only its own group, its own home, and no cron or at jobs (it
 is added to `/etc/cron.deny` and `/etc/at.deny`; the step fails when `/etc/cron.allow` or `/etc/at.allow` is there,
 since either makes the deny file ignored). It makes `/srv/judge` (the runner's, mode 0755) for the judge's scratch
 folders, and runs `lockout.py` (below) for `zjudge`. Then it runs `run.py --self-test --require-trace --as-user zjudge`
