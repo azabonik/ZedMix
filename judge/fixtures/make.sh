@@ -101,6 +101,11 @@
 #                to 4 s, 0.05 to 6 s, 0.3 to 11 s, 0.15 to the end (the same size in bytes as pk-rise.mkv)
 #   pk-six1.mkv ... pk-six5.mkv  the same, channel 0 a 2.5 kHz tone: silent to 1 s, then 0.1, but 0.5 from 2 + 2k
 #                to 4 + 2k s for pk-six<k> (each file loud at a moment of its own)
+# The word-targeting test's speech (test_bleep_words), the one fixture that is not made here: speech/speech.mkv,
+# committed (JUDGE.lock hashes it) and copied as it is, because a speech recogniser could hear a new synthesis
+# differently on another computer (speech/make_speech.py made it once, and says how):
+#   speech.mkv   seven words spoken by espeak-ng, apart (speech/layout.json: each word's text, start and end), 8.33 s,
+#                no picture                                                   FLAC 16 kHz mono in Matroska
 # The tones are at amplitude 1/8 (peak about -18 dBFS) where no level is given. The frame rate is the source's (rate=30), never -r.
 # Then checks each file it made with ffprobe (codecs, size, rate, frame count, channels) and prints what it made.
 set -euo pipefail
@@ -111,7 +116,7 @@ KEY=" key-grey.mp4 key-blue-p.mp4 key-blue-l.mp4 key-green.mp4 key-black.mp4 key
 CS=" cs-hd.mp4 cs-709.mp4 cs-601.mp4 cs-sd601.mp4 cs-sd.mp4 cs-sd709.mp4 cs-full709.mp4 cs-fullnm.mp4 cs-partial.mp4"
 CS="$CS cs-vp9.webm cs-rotsd.mp4 cs-grid.png cs-grid.jpg cs-cut601.mkv cs-testsrc.mp4 cs-gridll.mp4 cs-green.mp4 "
 SND=" bleep.mp4 voice.mkv rumble.mkv noise.mkv onset.mkv lay-mono.mkv lay-stereo.mkv lay-quad.mkv lay-51.mkv pk-rise.mkv"
-SND="$SND pk-fall.mkv pk-six1.mkv pk-six2.mkv pk-six3.mkv pk-six4.mkv pk-six5.mkv "
+SND="$SND pk-fall.mkv pk-six1.mkv pk-six2.mkv pk-six3.mkv pk-six4.mkv pk-six5.mkv speech.mkv "
 OPTIONAL=" idx.mp4 idx2997.mp4 skew.mp4 cutout.mkv move.mp4 tone300.m4a chirp.m4a long.mp4$MK${KEY# }${CS# }${SND# }"
 WANT=" "
 for n in "$@"; do
@@ -366,6 +371,7 @@ if want cs-green.mp4; then
 fi
 
 # ---- the sound tests' media (see the top)
+if want speech.mkv; then cp "$(dirname "${BASH_SOURCE[0]}")/speech/speech.mkv" "$OUT/speech.mkv"; fi
 if want bleep.mp4; then
   # the staircase's phase: 2 pi times the integral of 300 + 30 floor(2 t), which is 300 t + 30 (k t - k (k + 1) / 4)
   "$FF" -nostdin -hide_banner -loglevel error -y -f lavfi -i "color=c=gray:s=320x180:r=30:d=8" \
@@ -552,6 +558,10 @@ for f in pk-rise.mkv pk-fall.mkv pk-six1.mkv pk-six2.mkv pk-six3.mkv pk-six4.mkv
     [ -z "$(probe "$f" v "codec_type")" ] || { echo "make.sh: $f has a video stream" >&2; exit 1; }
   fi
 done
+if want speech.mkv; then
+  expect speech.mkv a:0 codec_name,sample_rate,channels flac,16000,1
+  [ -z "$(probe speech.mkv v "codec_type")" ] || { echo "make.sh: speech.mkv has a video stream" >&2; exit 1; }
+fi
 if want pk-rise.mkv && want pk-fall.mkv && [ "$(stat -c %s "$OUT/pk-rise.mkv")" != "$(stat -c %s "$OUT/pk-fall.mkv")" ]; then
   echo "make.sh: pk-rise.mkv and pk-fall.mkv differ in size" >&2; exit 1
 fi

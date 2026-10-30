@@ -3,8 +3,8 @@
 
     python3 -I judge/run.py [--adapter "<command>"] [--build <dir>] [--only <text>] [--timeout <s>] [--jobs <n>]
                             [--scratch <dir>] [--keep] [--list] [--strict] [--require-trace] [--allow-unprotected]
-                            [--as-user <name>] [--graphics-addon <dir>] [--release zedmix|v0.2.0]
-                            [--flaky-file <file>]
+                            [--as-user <name>] [--graphics-addon <dir>] [--whisper <dir>]
+                            [--release zedmix|v0.2.0] [--flaky-file <file>]
     python3 -I judge/run.py --self-test [--require-trace] [--as-user <name>]
 
 --adapter   the adapter command (default: this judge's v0.2.0 adapter, run with this Python). A word that names an
@@ -34,6 +34,13 @@
             Chrome headless shell in Remotion's browser cache below it (GRAPHICS_ADDON_BROWSER). A test that needs it
             records its checks on the add-on as not applicable without it (--strict fails them). Under --as-user that
             user must be able to read it and change none of it (the folder, its node_modules and the shell's folder)
+--whisper   the speech recogniser the judge gives the editor (default: $JUDGE_WHISPER, else none): a folder that
+            judge/fixtures/whisper/install.sh made (CI: /srv/judge/whisper), holding whisper.cpp's whisper-cli built
+            from the commit judge/fixtures/whisper/pin.json names and the model it pins. The runner refuses it at start
+            unless its manifest names that commit, the binary is the one the manifest hashed and names the commit, and
+            the model's sha256 is the pinned one (whisper_problem), so a stale or changed install fails loudly. A test
+            that needs it records its checks as not applicable without it (--strict fails them). Under --as-user that
+            user must be able to read and run it and change none of it
 --release   the release the build under test is graded as (default zedmix): zedmix (this product line's current
             release, and a rewrite of it) or v0.2.0 (the v0.2.0 release). The judge holds what each release
             is (its names: tests/test_cli_migrate.py's GENERATIONS), and the tests that depend on it grade the build
@@ -123,6 +130,7 @@ runs a process, could change a folder above the run's folder, or when sudo -n do
 """
 import argparse
 import ctypes
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -164,7 +172,9 @@ OPTIONAL_MEDIA = ("idx.mp4", "idx2997.mp4", "skew.mp4", "cutout.mkv", "move.mp4"
                   # the sound tests' media (batch 4)
                   "bleep.mp4", "voice.mkv", "rumble.mkv", "noise.mkv", "onset.mkv", "lay-mono.mkv", "lay-stereo.mkv",
                   "lay-quad.mkv", "lay-51.mkv", "pk-rise.mkv", "pk-fall.mkv", "pk-six1.mkv", "pk-six2.mkv",
-                  "pk-six3.mkv", "pk-six4.mkv", "pk-six5.mkv")
+                  "pk-six3.mkv", "pk-six4.mkv", "pk-six5.mkv",
+                  # test_bleep_words' speech (committed: fixtures/speech/speech.mkv, copied by make.sh)
+                  "speech.mkv")
 
 
 # ---------------------------------------------------------------- no access through /proc or ptrace
@@ -474,6 +484,23 @@ class AsUser:
                 return f"{self.name} can rename {child} (it can write {parent})"
         return None
 
+    def file_problem(self, path, run=False):
+        """None when this user can read (and with `run`, run) the regular file `path` but cannot change it: it owns
+        neither the file nor its folder chain (folder_problem on its folder) and has no write permission on it."""
+        why = self.folder_problem(os.path.dirname(os.path.realpath(path)))
+        if why:
+            return why
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode):
+            return f"{path} is not a regular file"
+        if st.st_uid == self.uid:
+            return f"{path} belongs to {self.name}"
+        if self._may(st, 2):
+            return f"{self.name} can write {path}"
+        if not self._may(st, 4) or (run and not self._may(st, 1)):
+            return f"{self.name} cannot {'read and run' if run else 'read'} {path}"
+        return None
+
     def procs(self):
         """[(pid, cmdline)] of every process of this user (by real, effective, saved or file-system user id) that is
         not a zombie: this process's own look at /proc, and `pgrep` as root for any that /proc hides from it."""
@@ -675,6 +702,12 @@ GRAPHICS_ADDON_PIN = os.path.join(JUDGE, "fixtures", "graphics-addon")
 NO_GRAPHICS_ADDON = ("no graphics add-on was given to the judge (run.py --graphics-addon, or JUDGE_GRAPHICS_ADDON; "
                      "judge/fixtures/graphics-addon/install.sh makes one)")
 
+# The speech recogniser the judge gives the editor (--whisper; PROTOCOL.md, "Sound"): whisper.cpp's whisper-cli and a
+# model, pinned by judge/fixtures/whisper/pin.json and installed by its install.sh, which writes manifest.json.
+WHISPER_PIN = os.path.join(JUDGE, "fixtures", "whisper", "pin.json")
+NO_WHISPER = ("no speech recogniser was given to the judge (run.py --whisper, or JUDGE_WHISPER; "
+              "judge/fixtures/whisper/install.sh makes one)")
+
 
 def graphics_addon(folder):
     """({"root", "browser"}, None) for an add-on folder in the layout PROTOCOL.md describes, with the Remotion version
@@ -693,6 +726,62 @@ def graphics_addon(folder):
     if not (os.path.isfile(browser) and os.access(browser, os.X_OK)):
         return None, f"{root} has no headless shell at {os.path.join(*GRAPHICS_ADDON_BROWSER)}"
     return {"root": root, "browser": browser}, None
+
+
+def _file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def whisper_paths(folder):
+    """{"root", "bin", "model"} of a recogniser folder in install.sh's layout (pin.json's target and model file)."""
+    with open(WHISPER_PIN, encoding="utf-8") as f:
+        pin = json.load(f)
+    root = os.path.realpath(folder)
+    return {"root": root, "bin": os.path.join(root, "bin", pin["target"]),
+            "model": os.path.join(root, "models", pin["model"]["file"])}
+
+
+def whisper_problem(folder):
+    """({"root", "bin", "model"}, None) for a recogniser folder that judge/fixtures/whisper/install.sh made from the
+    pins in pin.json, or (None, why not). Checked here, at start: the manifest names the pinned commit; the binary is a
+    regular program whose sha256 is the manifest's (its bytes depend on the compiler, so the judge cannot pin them; the
+    manifest is the install's own record) and whose bytes name the commit's first 7 characters (whisper.cpp's build
+    records it); the model is a regular file whose size and sha256 are the pinned ones. Nothing is run."""
+    try:
+        with open(WHISPER_PIN, encoding="utf-8") as f:
+            pin = json.load(f)
+        w = whisper_paths(folder)
+        with open(os.path.join(w["root"], "manifest.json"), encoding="utf-8") as f:
+            man = json.load(f)
+    except (OSError, ValueError, KeyError) as e:
+        return None, f"{os.path.realpath(folder)} holds no recogniser install (manifest.json: {e})"
+    commit = pin["commit"]
+    if man.get("commit") != commit:
+        return None, (f"its manifest names whisper.cpp commit {man.get('commit')!r}, not the pinned {commit} "
+                      f"(judge/fixtures/whisper/pin.json): a stale install; run install.sh again")
+    for k in ("bin", "model"):
+        p = w[k]
+        if os.path.islink(p) or not os.path.isfile(p):
+            return None, f"{p} is not a regular file"
+    if not os.access(w["bin"], os.X_OK):
+        return None, f"{w['bin']} is not a program"
+    got = _file_sha256(w["bin"])
+    if got != man.get("bin_sha256"):
+        return None, f"{w['bin']} has sha256 {got}, not the {man.get('bin_sha256')} its manifest recorded"
+    with open(w["bin"], "rb") as f:
+        if commit[:7].encode() not in f.read():
+            return None, f"{w['bin']} does not name whisper.cpp commit {commit[:7]} (not built from the pinned commit)"
+    size = os.path.getsize(w["model"])
+    if size != pin["model"]["size"]:
+        return None, f"{w['model']} is {size} bytes, not the pinned {pin['model']['size']}"
+    got = _file_sha256(w["model"])
+    if got != pin["model"]["sha256"]:
+        return None, f"{w['model']} has sha256 {got}, not the pinned {pin['model']['sha256']} ({pin['model']['url']})"
+    return w, None
 
 
 def _not_writable(path, user=None):
@@ -1138,7 +1227,8 @@ class TraceTail:
 class T:
     """What a test's run(t) gets: its scratch folder, the media, checks, and the editor (t.driver())."""
 
-    def __init__(self, name, scratch, media, build, adapter, out, trace_copy=None, addon=None, release=RELEASES[0]):
+    def __init__(self, name, scratch, media, build, adapter, out, trace_copy=None, addon=None, release=RELEASES[0],
+                 whisper=None):
         self.name, self.scratch, self.media_dir, self.build, self.adapter = name, scratch, media, build, adapter
         # The release the build is graded as (--release): one of RELEASES, the runner's input, never the adapter's.
         self.release = release
@@ -1148,6 +1238,10 @@ class T:
         # {"root", "browser"}, or None, and then graphics_addon_why says why (the checks on it are not applicable).
         self.graphics_addon = addon
         self.graphics_addon_why = None if addon else NO_GRAPHICS_ADDON
+        # The speech recogniser the judge gives the editor when a test asks for it (driver(whisper=True)): {"root",
+        # "bin", "model"}, or None, and then whisper_why says why (the checks that need it are not applicable).
+        self.whisper = whisper
+        self.whisper_why = None if whisper else NO_WHISPER
         self._out = out  # the write end of the runner's result pipe
         # Where this process writes its copy of the trace's lines (the runner names it: next to the scratch folder, or
         # in the run's records/ under --as-user).
@@ -1253,7 +1347,7 @@ class T:
         self.check(name, accept(v), f"{_short(v)} (want {want})")
         return v
 
-    def driver(self, trace=False, graphics_addon=False):
+    def driver(self, trace=False, graphics_addon=False, whisper=False):
         """The editor, started through the adapter in this test's scratch folder (started once per test). The
         adapter must answer hello with this judge's protocol version first.
 
@@ -1268,7 +1362,11 @@ class T:
 
         graphics_addon=True (on the first call) gives the editor the judge's graphics add-on (self.graphics_addon, from
         --graphics-addon) in start; without one it starts with none, and the test records its checks on the add-on
-        with t.not_applicable(name, t.graphics_addon_why). False: the editor has no add-on."""
+        with t.not_applicable(name, t.graphics_addon_why). False: the editor has no add-on.
+
+        whisper=True (on the first call) gives the editor the judge's speech recogniser (self.whisper, from --whisper)
+        in start; without one it starts with none, and the test records the checks that need it with
+        t.not_applicable(name, t.whisper_why). False: the editor has none (its speech settings name missing files)."""
         if self._driver is None:
             import driver
             cmd = list(self.adapter)
@@ -1293,7 +1391,8 @@ class T:
             if not self.check(f"the adapter speaks protocol {driver.PROTOCOL}", proto == driver.PROTOCOL,
                               f"hello says protocol {proto!r}", harness=True):
                 raise driver.AdapterError(f"the adapter speaks protocol {proto!r}, not {driver.PROTOCOL}", op="hello")
-            self._driver.start(self.build, self.graphics_addon if graphics_addon else None)
+            self._driver.start(self.build, self.graphics_addon if graphics_addon else None,
+                               whisper=self.whisper if whisper else None)
         return self._driver
 
     def finish(self):
@@ -1383,8 +1482,9 @@ def child(a, unprotected):
     spec = importlib.util.spec_from_file_location(os.path.basename(a.child)[:-3], a.child)
     mod = importlib.util.module_from_spec(spec)
     addon = graphics_addon(a.graphics_addon)[0] if a.graphics_addon else None  # the runner checked it
+    whisper = whisper_paths(a.whisper) if a.whisper else None  # the runner checked it (whisper_problem)
     t = T(os.path.basename(a.child)[:-3], a.scratch, a.media, a.build, json.loads(a.adapter_json), out, a.trace_copy,
-          addon, a.release)
+          addon, a.release, whisper)
     try:
         spec.loader.exec_module(mod)
         t._emit({"declare": _declared(mod)})
@@ -1586,6 +1686,7 @@ def run_test(meta, a, base, media, adapter):
                                  + (["--require-trace"] if a.require_trace else [])
                                  + (["--as-user", AS_USER.name] if AS_USER else [])
                                  + (["--graphics-addon", a.graphics_addon] if a.graphics_addon else [])
+                                 + (["--whisper", a.whisper] if a.whisper else [])
                                  + ["--release", a.release],
                                  stdin=subprocess.DEVNULL, stdout=logf, stderr=subprocess.STDOUT,
                                  start_new_session=True, cwd=scratch, env=env, pass_fds=(w,))
@@ -1792,6 +1893,10 @@ def main():
                     help="the graphics add-on to give the editor (Remotion and its headless shell, as "
                          "judge/fixtures/graphics-addon/install.sh makes it); without it the checks that need the "
                          "add-on are not applicable")
+    ap.add_argument("--whisper", metavar="DIR", default=os.environ.get("JUDGE_WHISPER") or None,
+                    help="the speech recogniser to give the editor (whisper.cpp's whisper-cli and its model, as "
+                         "judge/fixtures/whisper/install.sh makes them; checked against judge/fixtures/whisper/pin.json "
+                         "at start); without it the checks that need it are not applicable")
     ap.add_argument("--release", choices=RELEASES, default=RELEASES[0],
                     help="the release the build is graded as: zedmix (the default; judge.yml passes it) or v0.2.0 "
                          "(the v0.2.0 release)")
@@ -1868,6 +1973,17 @@ def main():
             return 1
         a.graphics_addon = addon["root"]
 
+    rec = None
+    if a.whisper:
+        rec, why = whisper_problem(a.whisper)
+        if why is None and AS_USER is not None:  # the editor's user runs it and must not be able to change it
+            why = (AS_USER.folder_problem(rec["root"]) or AS_USER.file_problem(rec["bin"], run=True)
+                   or AS_USER.file_problem(rec["model"]))
+        if why:
+            print(f"JUDGE: refused: --whisper {a.whisper}: {why}", flush=True)
+            return 1
+        a.whisper = rec["root"]
+
     import observe
     parent = a.scratch or tempfile.gettempdir()
     os.makedirs(parent, exist_ok=True)
@@ -1904,6 +2020,13 @@ def main():
     print(f"judge: build {a.build}, graded as the {a.release} release (--release)")
     print(f"judge: graphics add-on {addon['root']} (headless shell {addon['browser']})" if addon
           else f"judge: graphics add-on: none, so the checks on it are not applicable: {NO_GRAPHICS_ADDON}")
+    if rec:
+        with open(WHISPER_PIN, encoding="utf-8") as f:
+            pin = json.load(f)
+        print(f"judge: speech recogniser {rec['bin']} (whisper.cpp {pin['commit'][:7]}, checked) with "
+              f"{rec['model']} (sha256 {pin['model']['sha256'][:12]}..., checked)")
+    else:
+        print(f"judge: speech recogniser: none, so the checks that need it are not applicable: {NO_WHISPER}")
     print(f"judge: measurements with {observe.ffmpeg_version()} ({observe.FFMPEG})")
     print(f"judge: trace with {strace() or f'nothing ({strace_why()}): the trace checks are not observed'}"
           + (" (--seccomp-bpf)" if _STRACE.get("bpf") else "")

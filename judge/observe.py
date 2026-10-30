@@ -888,6 +888,71 @@ def lag(x, y, t0, t1, most=0.025, rate=8000):
     return best / rate
 
 
+def _dot(x, i, y, j, n):
+    """The sum of x[i + k] y[j + k] for k in range(n) (0 where either runs out)."""
+    n = min(n, len(x) - i, len(y) - j)
+    return sum(p * q for p, q in zip(x[i:i + n], y[j:j + n])) if n > 0 and i >= 0 and j >= 0 else 0.0
+
+
+def _without_tones(seg, freqs, rate):
+    """Samples `seg` less the pure tones `freqs` (Hz) fitted to them (each tone's DFT bin over the segment, taken
+    out), as a list."""
+    import math as m
+    y = list(seg)
+    n = len(y)
+    for f in freqs:
+        w = 2 * m.pi * f / rate
+        c = [m.cos(w * i) for i in range(n)]
+        s = [m.sin(w * i) for i in range(n)]
+        cc, ss, cs = sum(v * v for v in c), sum(v * v for v in s), sum(p * q for p, q in zip(c, s))
+        yc, ys = sum(p * q for p, q in zip(y, c)), sum(p * q for p, q in zip(y, s))
+        det = cc * ss - cs * cs
+        if n < 2 or abs(det) < 1e-12:
+            continue
+        ac, as_ = (yc * ss - ys * cs) / det, (ys * cc - yc * cs) / det
+        y = [v - ac * p - as_ * q for v, p, q in zip(y, c, s)]
+    return y
+
+
+def own_sound(src, out, offset, t0, t1, windows, most=0.02, rate=RATE, tones=()):
+    """How much of a source's own sound plays in an export, window by window: (lag, [gain]). `src` and `out` are
+    samples at `rate` Hz; source moment t plays at `offset` + t s of the export (give a lag of up to +-`most` s).
+    The lag is found once, over the source's span [t0, t1) s: the delay of the export behind the source that lines
+    them up best (their cross-correlation, first on 8-sample means within +-`most` s, then sample by sample around
+    the best). Each window's gain is the export's projection on the source there, at that lag: <out, src> /
+    <src, src> over the source window [a, b) s, so 1 where the source plays as it is, 0 where it is muted or replaced
+    by a sound of its own, and None where the source is silent. Windows are in source seconds. `tones` (Hz): pure
+    tones the export may play over the source there (a beep), fitted and taken out of the export's window first, so
+    a steady tone the source shares a little energy with does not read as the source."""
+    m, o, k = int(round(most * rate)), int(round(offset * rate)), 8
+    i0, i1 = max(0, int(round(t0 * rate))), min(len(src), int(round(t1 * rate)))
+    cs = [sum(src[i:i + k]) for i in range(i0, i1 - k + 1, k)]
+    best, best_v = 0, None
+    for d in range(-(m // k), m // k + 1):
+        j = i0 + o + d * k
+        if j < 0:
+            continue
+        co = [sum(out[q:q + k]) for q in range(j, min(len(out), j + len(cs) * k) - k + 1, k)]
+        v = sum(p * q for p, q in zip(cs, co))
+        if best_v is None or v > best_v:
+            best, best_v = d * k, v
+    fine, fine_v = best, None
+    for d in range(best - k, best + k + 1):
+        if abs(d) > m or i0 + o + d < 0:
+            continue
+        v = _dot(src, i0, out, i0 + o + d, i1 - i0)
+        if fine_v is None or v > fine_v:
+            fine, fine_v = d, v
+    gains = []
+    for a, b in windows:
+        ia, ib = max(0, int(round(a * rate))), min(len(src), int(round(b * rate)))
+        e = _dot(src, ia, src, ia, ib - ia)
+        j = ia + o + fine
+        seg = _without_tones(out[max(0, j):max(0, j + ib - ia)], tones, rate) if tones else out
+        gains.append(None if e < 1e-9 else _dot(src, ia, seg, 0 if tones else j, ib - ia) / e)
+    return fine / rate, gains
+
+
 def channel_samples(path, channel, rate=RATE):
     """One channel (0 = the first) of the first audio stream of `path` as 32-bit float samples at `rate` Hz, from
     its start: array('f')."""

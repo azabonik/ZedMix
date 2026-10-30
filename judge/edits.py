@@ -129,6 +129,48 @@ def refused_unchanged(d, fn, codes=(drv.ProductError,)):
     return ok, "; ".join(why)
 
 
+def unchanged(d, fn):
+    """(value, ok, detail): fn() (an operation that must succeed and change nothing, such as a dry run) answers
+    `value` and leaves the State and the undo history as they were. The undo history is probed as in
+    refused_unchanged: a marker K stays, a marker P is set and undone first; afterwards redo must bring P back, undo
+    take it away, and the next undo take back K (an operation that had made an undo step, even one that changes
+    nothing, would leave that undo doing nothing visible). value is None when fn raised (detail says so)."""
+    st = d.get_state()
+    mine = [(m["frame"], m.get("name")) for m in st.get("markers", [])]
+    used = {f for f, _ in mine}
+    free = [f for f in range(7, 9 + len(used)) if f not in used]
+    kept, probe = (free[0], "judge kept edit"), (free[1], "judge redo probe")
+    d.set_markers(mine + [kept])
+    d.set_markers(mine + [kept, probe])
+    d.undo()
+    s0 = d.get_state()
+    try:
+        value, err = fn(), None
+    except drv.JudgeError as e:
+        value, err = None, f"it was refused: {e}"
+    s1 = d.get_state()
+    d.redo()
+    s2 = d.get_state()
+    redone = {"frame": probe[0], "name": probe[1]} in s2.get("markers", [])
+    if redone:
+        d.undo()
+    s3 = d.get_state()
+    d.undo()
+    s4 = d.get_state()
+    ok = err is None and s1 == s0 and redone and s3 == s0 and s4 == st
+    why = [err] if err else []
+    if s1 != s0:
+        why.append("the State changed")
+    if not redone:
+        why.append("redo did not bring back the step undone before (the redo history was lost)")
+    elif s3 != s0:
+        why.append("undo after that redo did not give the State before")
+    if s4 != st:
+        why.append("the next undo did not take back the last edit before it (a marker): it left a step in the undo "
+                   "history" if s4 == s3 else "the next undo did not give the State from before")
+    return value, ok, "; ".join(why) or "the State and the undo history are as they were"
+
+
 def job_now(d, job):
     """The job `job` as d.jobs() lists it now (None when it is not listed)."""
     return next((j for j in d.jobs() if j.get("job") == job), None) if job else None

@@ -1,0 +1,42 @@
+{
+ "rate": 16000,
+ "seconds": 8.33,
+ "gap": 0.6,
+ "words": [
+  {
+   "text": "apple",
+   "start": 0.6,
+   "end": 1.01
+  },
+  {
+   "text": "river",
+   "start": 1.61,
+   "end": 2.08
+  },
+  {
+   "text": "basket",
+   "start": 2.68,
+   "end": 3.26
+  },
+  {
+   "text": "orange",
+   "start": 3.86,
+   "end": 4.36
+  },
+  {
+   "text": "window",
+   "start": 4.96,
+   "end": 5.49
+  },
+  {
+   "text": "garden",
+   "start": 6.09,
+   "end": 6.6
+  },
+  {
+   "text": "pencil",
+   "start": 7.2,
+   "end": 7.73
+  }
+ ]
+}

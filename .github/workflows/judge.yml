@@ -165,6 +165,53 @@ jobs:
           sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 /srv/judge
           bash "$RUNNER_TEMP/judge-src/judge/fixtures/graphics-addon/install.sh" /srv/judge/addon
 
+      # The speech recogniser the judge gives the editor (judge/README.md,
+      # "The speech recogniser"), like the add-on: before any code from the
+      # change runs and before the build user exists, as the runner's user,
+      # into /srv/judge/whisper, from the judge copy's pins
+      # (fixtures/whisper/pin.json). install.sh fetches whisper.cpp by its
+      # commit hash (never a tag) and checks HEAD against it, builds
+      # whisper-cli with the pinned flags (static, not tuned to this CPU) with
+      # the runner image's cmake and compiler, and installs the model after
+      # checking its size and sha256; the folder ends read-only and lockout.py
+      # proves zjudge can change none of it. The binary is always built here:
+      # an actions cache could be written by another workflow's job that runs
+      # the change's code. Only the model comes from a cache (keyed on its
+      # sha256, which install.sh checks before it is used, and the runner
+      # checks again at start), else from its Hugging Face revision URL.
+      # Nothing is downloaded during a test.
+      - name: The speech model's pin
+        id: wpin
+        run: |
+          echo "sha=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["model"]["sha256"])' \
+            "$RUNNER_TEMP/judge-src/judge/fixtures/whisper/pin.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the speech model
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/whisper-model
+          key: judge-whisper-model-${{ steps.wpin.outputs.sha }}
+
+      - name: Install the speech recogniser for the judge
+        env:
+          SHA: ${{ steps.wpin.outputs.sha }}
+        run: |
+          P="$RUNNER_TEMP/judge-src/judge/fixtures/whisper/pin.json"
+          M="$RUNNER_TEMP/whisper-model/$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["model"]["file"])' "$P")"
+          if [ -f "$M" ] && ! echo "$SHA  $M" | sha256sum -c --quiet - 2>/dev/null; then
+            echo "::warning title=Speech model::the cached model's sha256 is not the pinned one; it is downloaded again"
+            rm -f "$M"
+          fi
+          if [ ! -f "$M" ]; then
+            mkdir -p "$RUNNER_TEMP/whisper-model"
+            curl -fsSL --retry 3 --max-time 900 -o "$M" \
+              "$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["model"]["url"])' "$P")"
+          fi
+          chmod 0755 "$RUNNER_TEMP/whisper-model"
+          chmod 0644 "$M"
+          bash "$RUNNER_TEMP/judge-src/judge/fixtures/whisper/install.sh" /srv/judge/whisper --model "$M"
+          cat /srv/judge/whisper/manifest.json
+
       # The build user, before any code from the change runs: zjudge, no sudo,
       # only its own group, and no cron or at jobs (cron.deny, at.deny; an
       # allow file would make them ignored). /srv/judge (the runner's, mode 0755)
@@ -199,7 +246,7 @@ jobs:
             --fail-if-writable "$(dirname "$GITHUB_ENV")" \
             "$RUNNER_TEMP/judge-src" "$(dirname "$GITHUB_ENV")" "$GITHUB_ENV" "$GITHUB_PATH" "$GITHUB_OUTPUT" \
             "$GITHUB_STEP_SUMMARY" "$(dirname "$(dirname "$(command -v node)")")" "${path_dirs[@]}" "$HOME" \
-            "$GITHUB_WORKSPACE" /srv/judge
+            "$GITHUB_WORKSPACE" /srv/judge "$RUNNER_TEMP/whisper-model"
 
       # The runner's own tests (crash, hang, early exit, wrong check counts, a
       # leaked process, forged results, SIGTERM, the not applicable and not
@@ -211,7 +258,11 @@ jobs:
       # self-tests. No editor starts, so it runs before the install.
       # --require-trace: the tripwire cases must run here, so a runner where
       # strace cannot trace a child fails this step.
+      # JUDGE_WHISPER: the case where the runner accepts the recogniser
+      # installed above and the adapter gets it in start.
       - name: Judge runner self-test
+        env:
+          JUDGE_WHISPER: /srv/judge/whisper
         run: timeout -k 30 1200 python3 -I "$RUNNER_TEMP/judge-src/judge/run.py" --self-test --require-trace --as-user zjudge --scratch /srv/judge/selftest
 
       # The checkout without .git and judge/, in a folder of zjudge's: the
@@ -268,7 +319,7 @@ jobs:
             --fail-if-writable "$(dirname "$GITHUB_ENV")" \
             "$RUNNER_TEMP/judge-src" "$(dirname "$GITHUB_ENV")" "$GITHUB_ENV" "$GITHUB_PATH" "$GITHUB_OUTPUT" \
             "$GITHUB_STEP_SUMMARY" "$(dirname "$(dirname "$(command -v node)")")" "${path_dirs[@]}" "$HOME" \
-            "$GITHUB_WORKSPACE" /srv/judge
+            "$GITHUB_WORKSPACE" /srv/judge "$RUNNER_TEMP/whisper-model"
 
       # The install and the build ran code from the change under test: the
       # copy's lock and gate must be the bytes pinned before them, and the copy
@@ -306,7 +357,9 @@ jobs:
       # The judge from the copy against zjudge's build, through the v0.2.0
       # adapter (its MCP server over stdio, a scratch home and data folder, a
       # free port), measured with the runner's FFmpeg (apt, on PATH). The
-      # graphics tests get the add-on installed above (--graphics-addon).
+      # graphics tests get the add-on installed above (--graphics-addon), the
+      # word-targeting test the speech recogniser (--whisper; the runner
+      # checks its commit and both sha256s again before any test).
       # --as-user zjudge: the adapter, the editor and what they start run as
       # zjudge, under an strace that runs as root; after each test every zjudge
       # process is ended.
@@ -333,7 +386,8 @@ jobs:
           bash "$RUNNER_TEMP/judge-src/judge/ci/quiet.sh" --live timeout -k 30 2400 \
             python3 -I "$RUNNER_TEMP/judge-src/judge/run.py" --build /home/zjudge/build \
             --scratch /srv/judge/scratch --strict --require-trace --as-user zjudge \
-            --graphics-addon /srv/judge/addon --release zedmix --flaky-file "$RUNNER_TEMP/judge-flaky.txt"
+            --graphics-addon /srv/judge/addon --whisper /srv/judge/whisper --release zedmix \
+            --flaky-file "$RUNNER_TEMP/judge-flaky.txt"
 
       # FLAKY: the job stays green, the FLAKY lines go to the job summary with
       # a warning, and the logs (both runs' records) are collected and

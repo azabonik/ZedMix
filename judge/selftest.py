@@ -19,7 +19,11 @@ Statuses: a check recorded as not applicable (directly, or through T.check(needs
 not make) passes the run and is counted on the JUDGE line, and fails it with --strict; a check recorded as not observed
 passes and is counted, and fails with --require-trace. A test that asks for the graphics add-on gets it in the adapter's
 start with --graphics-addon (the fixture adapter writes what it got), records its check as not applicable without it (a
-failure with --strict), and a --graphics-addon folder with another Remotion version or no headless shell is refused. The
+failure with --strict), and a --graphics-addon folder with another Remotion version or no headless shell is refused. A
+test that asks for the speech recogniser records its check as not applicable without one (a failure with --strict); a
+--whisper folder with no manifest, a manifest naming another commit, a binary whose sha256 is not the manifest's or that
+does not name the pinned commit, or a model of another size or (at the pinned size) another sha256 is refused; with
+JUDGE_WHISPER naming an install the runner accepts, the adapter gets its binary and model in start. The
 download tripwire: an adapter that starts a DNS lookup (a UDP connect to 192.0.2.1 port 53), makes a UDP connect to
 192.0.2.1 port 9 and writes with write(), sends with sendto() to 192.0.2.1 port 9, or starts a TCP connect to 192.0.2.1
 port 80 fails the run's "nothing was downloaded" check. The adapter cannot reach the trace: one that starts a DNS lookup
@@ -167,6 +171,13 @@ TESTS = {
              "    name = \"the adapter got the judge's graphics add-on in start\"\n"
              "    if t.graphics_addon is None and got is None:\n        t.not_applicable(name, t.graphics_addon_why)\n"
              "    else:\n        t.check(name, got is not None and got == t.graphics_addon, got)\n",
+    # The speech recogniser (--whisper): the fixture adapter (mode speech) writes what start gave it to whisper.json.
+    "speech": "import json\nCHECKS = 1\ndef run(t):\n    t.driver(whisper=True)\n"
+              "    got = json.load(open(os.path.join(t.scratch, 'whisper.json')))\n"
+              "    name = \"the adapter got the judge's speech recogniser in start\"\n"
+              "    if t.whisper is None and got is None:\n        t.not_applicable(name, t.whisper_why)\n"
+              "    else:\n        t.check(name, got is not None and got == {k: t.whisper[k] for k in ('bin', 'model')}, "
+              "got)\n",
     # An optional fixture (run.OPTIONAL_MEDIA) named in EXTRA_MEDIA is made for the run; one that is not an optional
     # fixture refuses the run before anything is made.
     "media": "PORT_BOUND = False\nEXTRA_MEDIA = ('long.mp4',)\nCHECKS = 1\ndef run(t):\n"
@@ -546,6 +557,9 @@ for line in sys.stdin:
         if mode == "addon":
             with open(os.path.join(scratch, "addon.json"), "w") as f:
                 json.dump(args.get("graphics_addon"), f)
+        if mode == "speech":
+            with open(os.path.join(scratch, "whisper.json"), "w") as f:
+                json.dump(args.get("whisper"), f)
         why = net(mode)
         if why:
             print(json.dumps({"id": req["id"], "ok": False, "error": {"code": "product_error", "message": why}}),
@@ -690,6 +704,29 @@ class SelfTest:
             os.chmod(browser, 0o755)
         return root
 
+    def whisper_fixture(self, name, manifest=True, commit=None, bin_sha=None, named=True, model_size=None):
+        """A folder in the speech recogniser's layout (run.whisper_paths) that run.whisper_problem refuses or checks:
+        a small file for the binary (naming the pinned commit when `named`), a model of `model_size` bytes (default
+        10; "pin": the pinned size, a sparse file of zeros with another sha256), and a manifest naming `commit` (default
+        the pinned one) and `bin_sha` (default the binary's own sha256). Nothing in it runs."""
+        sys.path.insert(0, JUDGE)
+        import run
+        with open(run.WHISPER_PIN, encoding="utf-8") as f:
+            pin = json.load(f)
+        w = run.whisper_paths(os.path.join(self.tmp, name))
+        os.makedirs(os.path.dirname(w["bin"]))
+        os.makedirs(os.path.dirname(w["model"]))
+        with open(w["bin"], "wb") as f:
+            f.write(b"#!/bin/sh\nexit 1\n" + (pin["commit"][:7].encode() if named else b"") + b"\n")
+        os.chmod(w["bin"], 0o755)
+        with open(w["model"], "wb") as f:
+            f.truncate(10 if model_size is None else pin["model"]["size"] if model_size == "pin" else model_size)
+        if manifest:
+            with open(os.path.join(w["root"], "manifest.json"), "w", encoding="utf-8") as f:
+                json.dump({"commit": commit or pin["commit"], "bin_sha256": bin_sha or run._file_sha256(w["bin"]),
+                           "model_sha256": "0" * 64}, f)
+        return w["root"]
+
     def runner(self, case, adapter=None, extra=()):
         argv = [sys.executable, "-I", "-B", self.run_py, "--tests", self.tests, "--only", f"test_{case}.py",
                 "--scratch", os.path.join(self.tmp, "scratch"), *extra]
@@ -700,8 +737,10 @@ class SelfTest:
         return argv
 
     def run(self, case, want_rc, want=(), adapter=None, label=None, extra=(), env=None):
+        # JUDGE_WHISPER only where a case gives it: the runner hashes the recogniser's model (78 MB) at every start.
+        base = {k: v for k, v in os.environ.items() if k != "JUDGE_WHISPER"}
         p = subprocess.run(self.runner(case, adapter, extra), capture_output=True, text=True, timeout=300, cwd=self.tmp,
-                           stdin=subprocess.DEVNULL, env=None if env is None else {**os.environ, **env})
+                           stdin=subprocess.DEVNULL, env={**base, **(env or {})})
         return self.judge(label or case, p.returncode, p.stdout + p.stderr, want_rc, want)
 
     def judge(self, case, rc, out, want_rc, want):
@@ -1875,6 +1914,38 @@ def main(run_py, parent=None, allow_unprotected=False, require_trace=False, as_u
               adapter=f"{py} {FAKE_ADAPTER} 1 addon", extra=("--graphics-addon", s.addon_fixture("addon-noshell",
                                                                                              shell=False)),
               label="--graphics-addon without the headless shell: refused")
+        # The speech recogniser: start carries it when the runner has one and the test asks; without one the test's
+        # checks that need it are not applicable (a failure with --strict); a folder that is not the pinned install
+        # (its manifest's commit, the binary's sha256 and its commit, the model's size and sha256) is refused.
+        name = re.escape("the adapter got the judge's speech recogniser in start")
+        s.run("speech", 1, [fail.format("speech", f"{name}  -- not applicable, a failure with --strict: no speech "
+                                                  "recogniser was given")],
+              adapter=f"{py} {FAKE_ADAPTER} 1 speech", extra=("--strict",),
+              label="no --whisper: start carries none, the check is not applicable (with --strict: the run fails)")
+        for label, kw, want in (
+                ("no manifest", {"manifest": False}, r"\S+ holds no recogniser install \(manifest\.json: "),
+                ("a manifest naming another commit", {"commit": "1" * 40},
+                 r"its manifest names whisper\.cpp commit '1{40}', not the pinned [0-9a-f]{40} "),
+                ("a binary whose sha256 is not the manifest's", {"bin_sha": "2" * 64},
+                 r"\S+whisper-cli has sha256 [0-9a-f]{64}, not the 2{64} its manifest recorded"),
+                ("a binary that does not name the pinned commit", {"named": False},
+                 r"\S+whisper-cli does not name whisper\.cpp commit [0-9a-f]{7} "),
+                ("a model of another size", {}, r"\S+ is 10 bytes, not the pinned \d+$"),
+                ("a model of the pinned size with another sha256", {"model_size": "pin"},
+                 r"\S+ has sha256 [0-9a-f]{64}, not the pinned [0-9a-f]{64} \(https://huggingface\.co/")):
+            folder = s.whisper_fixture("whisper-" + re.sub(r"\W+", "-", label), **kw)
+            s.run("speech", 1, [r"^JUDGE: refused: --whisper \S+: " + want], adapter=f"{py} {FAKE_ADAPTER} 1 speech",
+                  extra=("--whisper", folder), label=f"--whisper with {label}: refused")
+        real = os.environ.get("JUDGE_WHISPER")
+        sys.path.insert(0, JUDGE)
+        import run as runmod
+        if real and runmod.whisper_problem(real)[1] is None:
+            s.run("speech", 0, [rf"^PASS  test_speech: {name}", drv(3, 3)], adapter=f"{py} {FAKE_ADAPTER} 1 speech",
+                  env={"JUDGE_WHISPER": real}, label="JUDGE_WHISPER: the adapter gets the recogniser's binary and "
+                                                     "model in start")
+        else:
+            print(f"skip --whisper accepted: JUDGE_WHISPER names no install the runner accepts ({real or 'unset'})",
+                  flush=True)
         # The download tripwire (strace on the adapter's tree, ptrace_scope 1 allows it: strace starts the adapter).
         if traced:
             s.run("driver", 1, [fail.format("driver", net + ".*htons\\(53\\).*192\\.0\\.2\\.1"),

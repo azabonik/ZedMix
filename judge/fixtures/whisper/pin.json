@@ -1,0 +1,30 @@
+{
+  "what": "The speech recogniser the judge gives the editor (run.py --whisper): whisper.cpp's whisper-cli, built from this commit with these flags, and this model. install.sh makes the folder; run.py checks it at start.",
+  "repository": "https://github.com/ggml-org/whisper.cpp",
+  "release": "v1.9.0",
+  "commit": "86c40c3bd6fc86f1187fb751d111b49e0fc18e84",
+  "cmake_flags": [
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DBUILD_SHARED_LIBS=OFF",
+    "-DCMAKE_EXE_LINKER_FLAGS=-static",
+    "-DGGML_NATIVE=OFF",
+    "-DGGML_SSE42=ON",
+    "-DGGML_AVX=ON",
+    "-DGGML_AVX2=ON",
+    "-DGGML_FMA=ON",
+    "-DGGML_F16C=ON",
+    "-DGGML_BMI2=ON",
+    "-DGGML_AVX512=OFF",
+    "-DGGML_OPENMP=OFF",
+    "-DWHISPER_BUILD_TESTS=OFF",
+    "-DWHISPER_SDL2=OFF",
+    "-DWHISPER_CURL=OFF"
+  ],
+  "target": "whisper-cli",
+  "model": {
+    "file": "ggml-tiny.en.bin",
+    "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en.bin",
+    "size": 77704715,
+    "sha256": "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"
+  }
+}

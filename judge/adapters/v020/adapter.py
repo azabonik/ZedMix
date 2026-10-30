@@ -12,7 +12,10 @@ point at fresh folders there, and AIVE_PORT is a free port (never 4791, the defa
 use). It downloads nothing (PROTOCOL.md rule 4): AIVE_CLIP_DISABLE=1 keeps the visual index model from loading, and
 AIVE_WHISPER_BIN / AIVE_WHISPER_MODEL name files that do not exist (<scratch>/editor/absent/..., never made), so a
 transcription is refused instead of fetching whisper.cpp and its model (~170 MB), as in the FFmpeg matrix
-(ffmpeg-matrix.yml). `start` refuses to go on if either of those files exists. The editor uses the FFmpeg on PATH, or
+(ffmpeg-matrix.yml). `start` refuses to go on if either of those files exists. When `start` gives `whisper` (the
+judge's speech recogniser: a whisper-cli and a model that the judge installed and checked, PROTOCOL.md "Sound"), the
+two variables name those files instead, the settings a source checkout honours: the editor then transcribes with them
+and fetches nothing. The editor uses the FFmpeg on PATH, or
 AIVE_FFMPEG / AIVE_FFPROBE when they are set in the adapter's environment. `start` checks that the core that answers
 is the one it started (its server.json is in the sandbox's data folder, names the sandbox's port, and its process has
 the sandbox's data folder in its environment) and refuses to go on otherwise. `stop` ends the editor's window server
@@ -578,6 +581,15 @@ class Adapter:
                                                f"node_modules/@remotion/renderer")
             if not (os.path.isfile(addon["browser"]) and os.access(addon["browser"], os.X_OK)):
                 raise OpError("adapter_error", f"the graphics add-on's browser {addon['browser']} is not a program")
+        rec = a.get("whisper")
+        if rec is not None:
+            if not isinstance(rec, dict):
+                raise bad(f"'whisper' must be an object with 'bin' and 'model', got {rec!r}")
+            rec = {"bin": os.path.realpath(arg_str(rec, "bin")), "model": os.path.realpath(arg_str(rec, "model"))}
+            if not (os.path.isfile(rec["bin"]) and os.access(rec["bin"], os.X_OK)):
+                raise OpError("adapter_error", f"the speech recogniser {rec['bin']} is not a program")
+            if not os.path.isfile(rec["model"]):
+                raise OpError("adapter_error", f"the speech model {rec['model']} is not a file")
         build, scratch = os.path.realpath(build), os.path.realpath(scratch)
         entry = os.path.join(build, "packages", "mcp", "dist", "index.js")
         if not os.path.isfile(entry):
@@ -608,6 +620,8 @@ class Adapter:
         for k in ("AIVE_FFMPEG", "AIVE_FFPROBE"):
             if os.environ.get(k):
                 env[k] = os.environ[k]
+        if rec is not None:  # the judge's checked recogniser (PROTOCOL.md, "Sound"), in place of the missing files
+            env["AIVE_WHISPER_BIN"], env["AIVE_WHISPER_MODEL"] = rec["bin"], rec["model"]
         if addon is not None:  # the judge's read-only copy of the add-on (PROTOCOL.md, "Motion graphics")
             env["AIVE_REMOTION_ADDON"] = os.path.realpath(addon["root"])
             env["AIVE_REMOTION_BROWSER"] = os.path.realpath(addon["browser"])
@@ -1967,6 +1981,12 @@ def self_test():
         expect("start: a graphics_addon that is not an object with root and browser is bad_request",
                [op(Adapter(), "start", {"build": tmp, "scratch": tmp, "graphics_addon": x})["error"]["code"]
                 for x in ("dir", {"root": tmp}, {"root": tmp, "browser": 3})], ["bad_request"] * 3)
+        expect("start: a whisper that is not an object with bin and model is bad_request; one naming no program or "
+               "no model file is adapter_error",
+               [op(Adapter(), "start", {"build": tmp, "scratch": tmp, "whisper": x})["error"]["code"]
+                for x in ("dir", {"bin": tmp}, {"bin": tmp, "model": 3},
+                          {"bin": os.path.join(tmp, "none"), "model": tmp}, {"bin": "/bin/sh", "model": tmp})],
+               ["bad_request"] * 3 + ["adapter_error"] * 2)
 
         # Effects and tracks (batch 2 operations), on canned replies.
         sent = []

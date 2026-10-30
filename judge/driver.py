@@ -178,14 +178,17 @@ class Driver:
         """-> {"protocol": int, "adapter": str, "ops": [str]}: what the adapter implements."""
         return self.request("hello", {}, timeout=60)
 
-    def start(self, build, graphics_addon=None):
+    def start(self, build, graphics_addon=None, whisper=None):
         """Starts the editor from `build` (a checkout or build folder) in this test's scratch folder. graphics_addon:
         {"root", "browser"}, the graphics add-on's files the judge gives the editor (PROTOCOL.md, "Motion graphics"),
-        or None (not sent: the editor has no add-on).
+        or None (not sent: the editor has no add-on). whisper: {"bin", "model"}, the speech recogniser the judge gives
+        the editor (PROTOCOL.md, "Sound"), or None (not sent: the editor has none).
         -> {"product": {"name", "version"}, "ports": [int]}"""
         args = {"build": os.path.abspath(build), "scratch": self.scratch}
         if graphics_addon is not None:
             args["graphics_addon"] = {"root": graphics_addon["root"], "browser": graphics_addon["browser"]}
+        if whisper is not None:
+            args["whisper"] = {"bin": whisper["bin"], "model": whisper["model"]}
         r = self.request("start", args, timeout=300)
         self.started = True
         self.ports = list(r.get("ports") or [])

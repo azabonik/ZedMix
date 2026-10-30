@@ -27,7 +27,8 @@ serves. They never import editor code, and they do not depend on its tool names,
 
 Requirements: Python 3 (standard library only), FFmpeg and ffprobe on `PATH`, `strace` (CI installs it; see "Statuses"
 for a run without it), the graphics add-on for the graphics tests (see "The graphics add-on"; without it their checks
-are not applicable), and for the v0.2.0 adapter, Node and a built checkout (`npm run build`; the adapter's
+are not applicable), the speech recogniser for the word-targeting test (see "The speech recogniser"; without it its
+checks are not applicable), and for the v0.2.0 adapter, Node and a built checkout (`npm run build`; the adapter's
 approve_host, revoke_host and set_graphics_renderer start the web shell, which needs the renderer that the build
 makes).
 
@@ -39,8 +40,10 @@ python3 -I judge/run.py --only import_export --keep
 python3 -I judge/run.py --list
 python3 -I judge/run.py --strict --require-trace   # not applicable and not observed fail, as in CI
 python3 -I judge/run.py --graphics-addon /tmp/judge-addon   # the add-on that fixtures/graphics-addon/install.sh made
+python3 -I judge/run.py --whisper /tmp/judge-whisper        # the recogniser that fixtures/whisper/install.sh made
 python3 -I judge/run.py --release v0.2.0 --build /path/to/v0.2.0   # grade the v0.2.0 release as itself
-python3 -I judge/run.py --as-user zjudge --scratch /srv/judge/scratch --strict --require-trace --build /home/zjudge/build
+python3 -I judge/run.py --as-user zjudge --scratch /srv/judge/scratch --strict --require-trace --build /home/zjudge/build \
+    --graphics-addon /srv/judge/addon --whisper /srv/judge/whisper
                                              # as CI runs it: the adapter and the editor as the user zjudge (below)
 python3 -I judge/run.py --allow-unprotected  # not Linux: run without the /proc protection (JUDGE line says UNPROTECTED)
 ```
@@ -98,7 +101,8 @@ A check passes or fails, or it is not made, for one of two reasons, each printed
 
 - **Not applicable** (`N/A`), for one of four reasons. First, the graphics tests' checks on the graphics add-on, when
   no add-on was given to the judge (`--graphics-addon`, or `JUDGE_GRAPHICS_ADDON`): a run without it cannot judge them,
-  and must not pass them. Second, the hostile input the check is about could not be made. The judge makes a hostile
+  and must not pass them; the same holds for `test_bleep_words`' checks when no speech recogniser was given
+  (`--whisper`, or `JUDGE_WHISPER`; see "The speech recogniser"). Second, the hostile input the check is about could not be made. The judge makes a hostile
   project or OTIO file by text substitution in a file the editor itself saved (`observe.craft`). That needs the file
   to hold the values as the test gave them: media and LUT paths and identifiers verbatim, colours as given, a number
   exactly once. A correct rewrite with another file format must not fail a security check for that reason, and must
@@ -172,11 +176,14 @@ pull request (see "Threat model"). Before anything from the change runs, the wor
 checkout keeps no token there or anywhere else: `actions/checkout` runs with `persist-credentials: false`), checks the
 copy with the copied gate, installs FFmpeg and `strace` from apt, installs the graphics add-on into `/srv/judge/addon`
 as the runner's user with the copy's `fixtures/graphics-addon/install.sh` (see "The graphics add-on"; it ends
+read-only), installs the speech recogniser into `/srv/judge/whisper` the same way with the copy's
+`fixtures/whisper/install.sh` (see "The speech recogniser": the binary built from the pinned commit in this job, the
+model from an actions cache keyed on its sha256 or from its pinned URL, checked by sha256 before it is used; it ends
 read-only), and makes the build user `zjudge`: no `sudo`, only its own group, its own home, and no cron or at jobs (it
 is added to `/etc/cron.deny` and `/etc/at.deny`; the step fails when `/etc/cron.allow` or `/etc/at.allow` is there,
 since either makes the deny file ignored). It makes `/srv/judge` (the runner's, mode 0755) for the judge's scratch
 folders, and runs `lockout.py` (below) for `zjudge`. Then it runs `run.py --self-test --require-trace --as-user zjudge`
-from the copy. It copies the checkout without `.git` and `judge/` to `/home/zjudge/build`, and runs `npm ci`, the
+from the copy, with `JUDGE_WHISPER=/srv/judge/whisper` (the self-test's case where the runner accepts the recogniser). It copies the checkout without `.git` and `judge/` to `/home/zjudge/build`, and runs `npm ci`, the
 Electron install and the build there as `zjudge` (`sudo -n -u zjudge -H env -i`, with the toolchain's `node` first on
 `PATH`, `zjudge`'s home and npm cache, umask 022; no npm cache is restored or saved). The output of those steps goes to
 a file of the runner's (mode 0600), which the step prints after the command ends between `::stop-commands::<token>` and
@@ -188,8 +195,8 @@ ended), checks that the copy's lock and gate are the bytes it pinned before the 
 its lock, lifts Ubuntu's AppArmor restriction on unprivileged user namespaces
 (`kernel.apparmor_restrict_unprivileged_userns=0`, which the editor's built-in graphics renderer needs for its sandbox,
 as in `ci.yml`), then runs the judge from the copy with `--build /home/zjudge/build --scratch /srv/judge/scratch
---strict --require-trace --as-user zjudge --graphics-addon /srv/judge/addon --release zedmix --flaky-file
-$RUNNER_TEMP/judge-flaky.txt`. When a test passed its rerun after strace failed (see "A test rerun after strace
+--strict --require-trace --as-user zjudge --graphics-addon /srv/judge/addon --whisper /srv/judge/whisper --release zedmix
+--flaky-file $RUNNER_TEMP/judge-flaky.txt`. When a test passed its rerun after strace failed (see "A test rerun after strace
 failed"), the next step puts the `FLAKY` lines in the job summary with a warning, and the logs are collected and
 uploaded as for a failed run. On main (a push or a manual run, never a pull request) the `FLAKY` lines are also
 uploaded (`judge-flaky`, an empty file when none), and a separate job, `flaky-report`, the only one with
@@ -207,7 +214,8 @@ artifact. `ci.yml` runs the lock gate on the checkout as well, so deleting `judg
 `lockout.py --user zjudge [--kill] [--fail-if-writable DIR] PATH...` proves that `zjudge` cannot change what the judge
 and the steps after it rely on. `judge.yml` gives it the judge's copy, its own step's file-command files (`$GITHUB_ENV`,
 `$GITHUB_PATH`, `$GITHUB_OUTPUT`, `$GITHUB_STEP_SUMMARY` and their folder under `$RUNNER_TEMP/_runner_file_commands`),
-the setup-node toolchain, every folder on `PATH`, the runner's home, the workspace and `/srv/judge`. For every folder
+the setup-node toolchain, every folder on `PATH`, the runner's home, the workspace, `/srv/judge` and the speech model's
+cache folder (`$RUNNER_TEMP/whisper-model`). For every folder
 and regular file under each of them, and every folder above them, it takes away the write bit for others where it is set
 (`chmod o-w`; not on a sticky folder above them, such as `/tmp`), then, as `zjudge`, tries to open each file for
 writing, to add a file to each folder and to change each one's mode (nothing is written, and an added file is removed
@@ -246,7 +254,12 @@ that names an optional fixture in `EXTRA_MEDIA` must get it, a run whose tests n
 and a name that is not an optional fixture must refuse the run before anything is made. A fixture test that asks for
 the graphics add-on must get it in the adapter's `start` with `--graphics-addon`, and record its check as
 not applicable without it (a failure with `--strict`); a `--graphics-addon` folder with another Remotion version, or
-with no headless shell, must be refused. A fixture adapter that starts a DNS lookup (a UDP connect to 192.0.2.1 port
+with no headless shell, must be refused. A fixture test that asks for the speech recogniser must record its check as
+not applicable without one (a failure with `--strict`); a `--whisper` folder with no manifest, a manifest naming another
+commit, a binary whose sha256 is not the manifest's or that does not name the pinned commit, or a model of another size
+or of the pinned size with another sha256 must be refused; and with `JUDGE_WHISPER` naming an install the runner
+accepts (`judge.yml` gives it), the fixture adapter must get its binary and model in `start` (without one that case is
+skipped). A fixture adapter that starts a DNS lookup (a UDP connect to 192.0.2.1 port
 53), makes a UDP connect to 192.0.2.1 port 9 and sends with
 `write()`, sends with `sendto()` to 192.0.2.1 port 9, or starts a TCP connect to 192.0.2.1 port 80 must fail the
 download check. The adapter must not reach the trace: one that starts a DNS lookup and at stop rewrites, empties or
@@ -334,6 +347,8 @@ check that a file the editor says it made (a copy, a still, a thumbnail, a previ
 | `check_observe.py` | Compares `observe.py` with the values that the baseline checker recorded for its oracle exports (a local tool: the oracles are not in the repository). |
 | `fixtures/make.sh` | Makes the test media: the base set, and the optional fixtures that the run's tests name (`EXTRA_MEDIA`). |
 | `fixtures/v020-otio/` | OpenTimelineIO files that the v0.2.0 release exported (`generate.py` made them with the v0.2.0 adapter, and replaced only their media folder with a token) and `manifest.json`, what each must open as, for `tests/test_v020_otio_compat.py`. `generate.py` is a tool a person runs once against the v0.2.0 release, as their own user and with no trace; CI never runs it. |
+| `fixtures/whisper/` | The speech recogniser the judge gives the editor: `pin.json` (whisper.cpp's repository, release, commit and cmake flags; the model's file, Hugging Face revision URL, size and sha256) and `install.sh`, which builds and installs it into a folder (see "The speech recogniser"). |
+| `fixtures/speech/` | `speech.mkv`, the word-targeting test's recording (seven words, 16 kHz FLAC), `layout.json` (each word's text, start and end) and `make_speech.py`, which made them once with espeak-ng (its header says how). Committed, not made at test time. |
 | `fixtures/graphics-addon/` | The graphics add-on the judge gives the editor: `package.json` and `package-lock.json` (Remotion 4.0.481's packages, with their integrity hashes), `headless-shell.json` (the Chrome headless shell's URL, size and sha256) and `install.sh`, which installs both into a folder (see "The graphics add-on"). |
 | `run.py` | The runner. |
 | `lockout.py` | CI's proof that the build user cannot change what the judge relies on (see "CI"). |
@@ -377,6 +392,10 @@ def run(t):
   fixture refuses the run.
 - `t.release` is the release the build is graded as (`run.py --release`: `zedmix` or `v0.2.0`). A test whose
   expectations depend on the release takes them from it, never from what the build or the adapter reports.
+- `t.driver(whisper=True)` gives the editor the judge's speech recogniser in `start` (see "The speech recogniser").
+  `t.whisper` is it (`{"root", "bin", "model"}`), or None when the judge has none; the test then records each check
+  that needs it with `t.not_applicable(name, t.whisper_why)`. Without the argument the editor starts with none (its
+  settings name missing files, PROTOCOL.md rule 4).
 - `t.driver(graphics_addon=True)` gives the editor the judge's graphics add-on in `start` (see "The graphics add-on").
   `t.graphics_addon` is it (`{"root", "browser"}`), or None when the judge has none; the test then records each of its
   checks on the add-on with `t.not_applicable(name, t.graphics_addon_why)`. Without the argument the editor starts
@@ -453,6 +472,44 @@ The headless shell is the one Remotion 4.0.481 tests with (its `TESTED_VERSION`)
 storage.googleapis.com (its MD5 matched the object's own). A change of the editor's Remotion pin is a judge change:
 the lock and `headless-shell.json` move with it.
 
+## The speech recogniser
+
+`bleep_words` works from the editor's word-level transcript, which a speech recogniser makes from speech. A user's
+editor fetches one on first use (that downloads it). The judge downloads nothing during a test, so it installs the
+recogniser itself before the run and gives the editor its files in `start` (`t.driver(whisper=True)`, PROTOCOL.md
+"Lifecycle"), as it does the graphics add-on:
+
+```sh
+bash judge/fixtures/whisper/install.sh /tmp/judge-whisper [--src <checkout>] [--model <file>] [--bin <file>]
+python3 -I judge/run.py --whisper /tmp/judge-whisper
+```
+
+The recogniser is whisper.cpp's `whisper-cli`, release v1.9.0 (the release the v0.2.0 editor names), pinned by its
+commit hash in `fixtures/whisper/pin.json` (GitHub's tag archives are not byte-stable, and a tag can move), with the
+`ggml-tiny.en.bin` model pinned by its size, its sha256 and a Hugging Face revision URL (the sha256 is the one Hugging
+Face reports for that file at that revision). `install.sh` fetches the commit (`git fetch --depth 1 origin <commit>`)
+and checks `HEAD` and a clean tree, builds `whisper-cli` with `pin.json`'s cmake flags (static, and not tuned to the
+computer that builds it, so a cached build cannot stop with an illegal instruction on another runner; it still needs
+SSE4.2, AVX, AVX2, FMA, F16C and BMI2: a Haswell or later x86-64, as GitHub's runners are), checks that the binary is
+static and names the commit, installs the model after its size and sha256 check, writes `manifest.json` (the commit,
+the binary's and the model's sha256, the compiler and cmake versions) and makes the folder read-only. `--src`,
+`--model` and `--bin` take copies already on disk (checked the same way; `--bin` is a person's own build of that
+commit with those flags, which the manifest then records as not built by `install.sh`; CI never passes it).
+
+At start (`run.py`, before any test) the runner refuses a `--whisper` folder whose manifest names another commit, whose
+binary is not the one the manifest hashed or does not name the commit, or whose model is not the pinned size and
+sha256: a stale or changed install fails the run loudly (`JUDGE: refused: --whisper ...`), never a check. It runs
+nothing of it. Under `--as-user` it also refuses a folder, binary or model the other user could change, or cannot read
+and run. The binary's own sha256 is not pinned in the judge: it depends on the compiler (this computer's GCC 11.4 and
+the runner image's GCC 13 make different bytes), so the manifest, which the runner's user wrote, is the record it is
+checked against.
+
+The model is tiny.en, not the editor's default base.en: tiny.en finds all seven words of the judge's recording (as
+base.en does), and `test_bleep_words` passes with either (PORTING.md, batch 4b's margins). Word times differ between
+the two (base.en writes "Garden," and runs a word's end further into the silence after it), so the test compares words
+with case and punctuation ignored and holds times to bounds both meet. The recording (`fixtures/speech/speech.mkv`) is
+committed rather than made at test time, so every computer's recogniser hears the same samples.
+
 ## Update the lock
 
 After a change to the judge (its pull request's gauntlet reviews the lock change):
@@ -499,6 +556,13 @@ What it defends against:
   installed by the runner's user from the judge's own pins (the lock's sha512 per package, the headless shell's
   sha256) before any code from the change runs, read-only, under `/srv/judge`, where `lockout.py` proves `zjudge` can
   change nothing. `run.py` refuses an add-on folder `zjudge` could change.
+- **A speech recogniser that the change under test provides**: the recogniser the editor transcribes with is the
+  judge's, built and installed by the runner's user from the judge's own pins (whisper.cpp's commit, fetched by its
+  hash and checked; the model's size and sha256) before any code from the change runs, read-only, under `/srv/judge`,
+  where `lockout.py` proves `zjudge` can change nothing. The binary is built in the job, never restored from a cache
+  (an actions cache entry can be written by another workflow's job that runs the change's code); the model may come
+  from a cache, and is checked by its sha256 before it is installed (a cached copy that fails the check is fetched
+  again). `run.py` checks the commit and both sha256s again at start and refuses an install `zjudge` could change.
 - **Edits to the judge, its gate or its workflow** that do not show as a `JUDGE.lock` change: the lock gate fails in
   `ci.yml` and in `judge.yml`. An edit together with a lock update passes the gate; it is visible in the diff, where
   the gauntlet's review of the pull request (with its lock and leakage check) sees it, and nothing more stops it.
@@ -596,7 +660,9 @@ What it defends against:
   same rule by what is heard: each source's sound says its own moment (a staircase of tones, a tone that starts at
   1 s) and each export plays a set of bleeps, a placement, a level, an effect or a speed that no earlier export of
   the test plays (`PORTING.md`, batch 4); the preview is asked for after a change that no export shows, and must be
-  a new file of the editor's.
+  a new file of the editor's. `test_bleep_words`' four exports each bleep a set of words no other one bleeps (garden
+  and pencil; window; none; pencil alone, on the linked sound clip), and every word is read in each, so the previous
+  export handed in fails (`PORTING.md`, batch 4b).
 - **A file format that defeats the crafted inputs**: a rewrite whose saved files do not hold the values as given
   turns the checks on crafted inputs into not applicable, each listed by name and counted on the `JUDGE` line, never
   into passes; `--strict` fails them.
@@ -695,10 +761,23 @@ What it does not defend against:
   which the adapter makes, so an adapter that decodes the file with its own FFmpeg and answers with the right levels
   (and the right refusals, which depend only on what was imported and on the request) passes `test_peaks` without the
   editor. The checks hold the answer to what the file holds, not to who worked it out.
-- `bleep_words` is judged only where it must do nothing: the judge has no speech recording and the editor no speech
-  model in a test (PROTOCOL.md rule 4), so the editor has no transcript and must refuse, or find no word, and change
-  nothing. An adapter that refuses it without asking the editor passes that check. Grading the bleeps it makes needs a
-  speech fixture and a pinned model that the judge installs (as it installs the graphics add-on): an open decision.
+- `bleep_words` worked out by the adapter from other operations of the editor: an adapter that runs its own speech
+  recogniser on the clip's source file (the judge's recogniser, whose paths `start` gives it, or another), matches the
+  words itself, answers `get_transcript` and the hits with what it found, removes the clip's bleeps with
+  `remove_bleeps` and adds one per hit with `add_bleep` (its window padded as the editor pads it, on the linked sound
+  clip when the clip given is a silent picture), and answers the `undo` and `redo` that follow with as many of the
+  editor's own as it made steps, passes `test_bleep_words` (the lying adapter `own2` passes all 14 of its checks;
+  without the undo grouping, `own`, it fails the undo checks). The checks hold the transcript, the hits and the
+  bleeps to what the export plays, not to who worked them out. An adapter that answers a transcript or hits without
+  the editor's bleeps fails on the export (PORTING.md, batch 4b). Where the recogniser finds no word, `test_bleeps`
+  still holds `bleep_words` to doing nothing (its media are tones, and it starts the editor with no recogniser); an
+  adapter that refuses it there without asking the editor passes that check.
+- The speech recogniser's build: `install.sh` runs whisper.cpp's own cmake build at the pinned commit as the runner's
+  user (which has passwordless `sudo`), so that commit's build scripts are trusted as the runner image's programs are.
+  The binary's bytes are not pinned (they depend on the compiler), only checked against the install's own manifest.
+  A build with the runner image's GCC 13.3 and cmake 3.28 (`install.sh` without `--bin`, in a container as GitHub's
+  runner) gave the same word times as this computer's GCC 11.4 build (PORTING.md, batch 4b); another compiler
+  could still differ, and the bounds have the margins recorded there.
 - A detection operation's answer that the adapter works out itself from the source. `detect_key_colour` is held to
   the screen's colour as the judge reads it (test_colorspace) and to the colour that the editor's own `auto` resolves
   to on the same clip (test_key: the grey screen and the green screen). An adapter that measures the clip's border
